@@ -5,6 +5,7 @@ const { execSync } = require("child_process");
 
 const APP_NAME = "9router";
 const APP_LABEL = "com.9router.autostart";
+const WINDOWS_TASK_NAME = "9Router AutoRun Admin";
 
 /**
  * Resolve the absolute path to this package's cli.js.
@@ -98,8 +99,16 @@ function isAutoStartEnabled() {
         return false;
       }
     } else if (platform === "win32") {
-      const startupPath = path.join(process.env.APPDATA || "", "Microsoft", "Windows", "Start Menu", "Programs", "Startup", `${APP_NAME}.vbs`);
-      return fs.existsSync(startupPath);
+      try {
+        execSync(`schtasks /Query /TN "${WINDOWS_TASK_NAME}"`, {
+          stdio: ["ignore", "ignore", "ignore"],
+          windowsHide: true,
+          timeout: 3000
+        });
+        return true;
+      } catch (e) {
+        return false;
+      }
     } else if (platform === "linux") {
       const desktopPath = path.join(os.homedir(), ".config", "autostart", `${APP_NAME}.desktop`);
       return fs.existsSync(desktopPath);
@@ -236,30 +245,95 @@ function disableMacOS() {
 
 // ============ Windows ============
 
+function windowsStartupVbsPath() {
+  return path.join(process.env.APPDATA || "", "Microsoft", "Windows", "Start Menu", "Programs", "Startup", `${APP_NAME}.vbs`);
+}
+
+function cleanupLegacyWindowsVbs() {
+  try {
+    const vbsPath = windowsStartupVbsPath();
+    if (fs.existsSync(vbsPath)) fs.unlinkSync(vbsPath);
+  } catch (e) {}
+}
+
+function encodePowerShell(script) {
+  return Buffer.from(script, "utf16le").toString("base64");
+}
+
+function quotePs(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function isWindowsAdmin() {
+  try {
+    execSync("net session >nul 2>&1", {
+      stdio: "ignore",
+      shell: true,
+      windowsHide: true,
+      timeout: 3000
+    });
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function runPowerShell(script, { elevated = false } = {}) {
+  const encoded = encodePowerShell(script);
+  if (!elevated || isWindowsAdmin()) {
+    execSync(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand ${encoded}`, {
+      stdio: "ignore",
+      windowsHide: true,
+      timeout: 15000
+    });
+    return true;
+  }
+
+  const wrapper = `
+$proc = Start-Process powershell -ArgumentList @(
+  '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
+  '-WindowStyle','Hidden','-EncodedCommand','${encoded}'
+) -Verb RunAs -Wait -PassThru -WindowStyle Hidden
+if ($proc.ExitCode -ne 0) { throw "Elevated PowerShell exited with code $($proc.ExitCode)" }
+`;
+  execSync(`powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ${quotePs(wrapper)}`, {
+    stdio: "ignore",
+    windowsHide: true,
+    timeout: 30000
+  });
+  return true;
+}
+
 function enableWindows(cliPath) {
-  const startupDir = path.join(process.env.APPDATA || "", "Microsoft", "Windows", "Start Menu", "Programs", "Startup");
-  const vbsPath = path.join(startupDir, `${APP_NAME}.vbs`);
-
-  if (!fs.existsSync(startupDir)) return false;
-
   const nodePath = process.execPath;
   const routerScript = getCliJsPath(cliPath);
   if (!routerScript) return false;
 
-  // Run node + cli.js directly, hidden window. Avoids the fragile
-  // `9router.cmd` lookup that depended on the npm prefix path.
-  const vbsContent = `Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run """${nodePath}"" ""${routerScript}"" --tray --skip-update", 0, False
+  cleanupLegacyWindowsVbs();
+
+  const script = `
+$ErrorActionPreference = 'Stop'
+$taskName = ${quotePs(WINDOWS_TASK_NAME)}
+$nodePath = ${quotePs(nodePath)}
+$routerScript = ${quotePs(routerScript)}
+$user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
+$action = New-ScheduledTaskAction -Execute $nodePath -Argument ('"' + $routerScript + '" --tray --skip-update')
+$trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
+$principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
+$settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 0)
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force | Out-Null
 `;
-  fs.writeFileSync(vbsPath, vbsContent);
-  return true;
+  runPowerShell(script, { elevated: true });
+  return isAutoStartEnabled();
 }
 
 function disableWindows() {
-  const vbsPath = path.join(process.env.APPDATA || "", "Microsoft", "Windows", "Start Menu", "Programs", "Startup", `${APP_NAME}.vbs`);
-  if (fs.existsSync(vbsPath)) {
-    fs.unlinkSync(vbsPath);
-  }
+  cleanupLegacyWindowsVbs();
+  const script = `
+$ErrorActionPreference = 'SilentlyContinue'
+Unregister-ScheduledTask -TaskName ${quotePs(WINDOWS_TASK_NAME)} -Confirm:$false | Out-Null
+`;
+  runPowerShell(script, { elevated: true });
   return true;
 }
 

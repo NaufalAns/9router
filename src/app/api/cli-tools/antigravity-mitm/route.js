@@ -12,7 +12,7 @@ import {
   isSudoPasswordRequired,
   initDbHooks,
 } from "@/mitm/manager";
-import { getSettings, updateSettings } from "@/lib/localDb";
+import { getApiKeys, getSettings, updateSettings } from "@/lib/localDb";
 
 initDbHooks(getSettings, updateSettings);
 
@@ -64,26 +64,49 @@ function checkPrivilege(pwd) {
   return !!pwd;
 }
 
+async function getDefaultApiKey() {
+  try {
+    const keys = await getApiKeys();
+    return keys.find((k) => k.isActive !== false)?.key || "sk_9router";
+  } catch {
+    return "sk_9router";
+  }
+}
+
+function buildStatusResponse(status, settings, hasCachedPassword) {
+  const dnsToolEnabled = settings.dnsToolEnabled || {};
+  return {
+    running: status.running,
+    pid: status.pid || null,
+    certExists: status.certExists || false,
+    certTrusted: status.certTrusted || false,
+    dnsStatus: status.dnsStatus || {},
+    hasCachedPassword,
+    isWin,
+    needsSudoPassword: !isWin && !hasCachedPassword && isSudoPasswordRequired(),
+    isAdmin: checkIsAdmin(),
+    mitmAutoStartEnabled: settings.mitmEnabled === true,
+    antigravityDnsAutoStartEnabled: dnsToolEnabled.antigravity === true,
+    mitmRouterBaseUrl:
+      (settings.mitmRouterBaseUrl && String(settings.mitmRouterBaseUrl).trim()) ||
+      DEFAULT_MITM_ROUTER_BASE,
+  };
+}
+
+async function getFullStatusResponse(extra = {}) {
+  const status = await getMitmStatus();
+  const settings = await getSettings();
+  const hasCachedPassword = !!getCachedPassword() || !!(await loadEncryptedPassword());
+  return { ...extra, ...buildStatusResponse(status, settings, hasCachedPassword) };
+}
+
 // GET - Full MITM status (server + per-tool DNS)
 export async function GET() {
   try {
     const status = await getMitmStatus();
     const settings = await getSettings();
     const hasCachedPassword = !!getCachedPassword() || !!(await loadEncryptedPassword());
-    return NextResponse.json({
-      running: status.running,
-      pid: status.pid || null,
-      certExists: status.certExists || false,
-      certTrusted: status.certTrusted || false,
-      dnsStatus: status.dnsStatus || {},
-      hasCachedPassword,
-      isWin,
-      needsSudoPassword: !isWin && !hasCachedPassword && isSudoPasswordRequired(),
-      isAdmin: checkIsAdmin(),
-      mitmRouterBaseUrl:
-        (settings.mitmRouterBaseUrl && String(settings.mitmRouterBaseUrl).trim()) ||
-        DEFAULT_MITM_ROUTER_BASE,
-    });
+    return NextResponse.json(buildStatusResponse(status, settings, hasCachedPassword));
   } catch (error) {
     console.log("Error getting MITM status:", error.message);
     return NextResponse.json({ error: "Failed to get MITM status" }, { status: 500 });
@@ -162,10 +185,61 @@ export async function DELETE(request) {
 // PATCH - Toggle DNS for a specific tool (enable/disable)
 export async function PATCH(request) {
   try {
-    const { tool, action, sudoPassword } = await request.json();
+    const { tool, action, sudoPassword, enabled } = await request.json();
     const pwd = getPassword(sudoPassword) || await loadEncryptedPassword() || "";
 
-    if (!tool || !action) {
+    if (!action) {
+      return NextResponse.json({ error: "action required" }, { status: 400 });
+    }
+
+    if (action === "set-antigravity-autostart") {
+      const nextEnabled = enabled === true;
+      const settings = await getSettings();
+      const currentDnsToolEnabled = settings.dnsToolEnabled || {};
+      const nextDnsToolEnabled = { ...currentDnsToolEnabled, antigravity: nextEnabled };
+      const anyToolEnabled = Object.values(nextDnsToolEnabled).some(Boolean);
+
+      await updateSettings({
+        mitmEnabled: nextEnabled ? true : anyToolEnabled,
+        dnsToolEnabled: nextDnsToolEnabled,
+      });
+
+      let appliedNow = false;
+      let warning = null;
+
+      if (!checkPrivilege(pwd)) {
+        warning = isWin
+          ? "Administrator required — settings saved and will apply when 9Router runs as Administrator"
+          : "Root or sudo password required — settings saved and will apply when privilege is available";
+        return NextResponse.json(await getFullStatusResponse({ success: true, appliedNow, warning }));
+      }
+
+      try {
+        if (nextEnabled) {
+          let status = await getMitmStatus();
+          if (!status.running) {
+            await startServer(await getDefaultApiKey(), pwd);
+            status = await getMitmStatus();
+          }
+          if (status.running) {
+            await enableToolDNS("antigravity", pwd);
+            appliedNow = true;
+          } else {
+            warning = "MITM settings saved, but server is not running";
+          }
+        } else {
+          await disableToolDNS("antigravity", pwd);
+          appliedNow = true;
+        }
+        if (!isWin && sudoPassword) setCachedPassword(sudoPassword);
+      } catch (e) {
+        warning = `Settings saved, but current session was not fully updated: ${e.message}`;
+      }
+
+      return NextResponse.json(await getFullStatusResponse({ success: true, appliedNow, warning }));
+    }
+
+    if (!tool && action !== "trust-cert") {
       return NextResponse.json({ error: "tool and action required" }, { status: 400 });
     }
     if (requiresSudoPassword(pwd)) {
@@ -188,7 +262,7 @@ export async function PATCH(request) {
       const status = await getMitmStatus();
       return NextResponse.json({ success: true, certTrusted: status.certTrusted });
     } else {
-      return NextResponse.json({ error: "action must be enable, disable, or trust-cert" }, { status: 400 });
+      return NextResponse.json({ error: "action must be enable, disable, trust-cert, or set-antigravity-autostart" }, { status: 400 });
     }
 
     if (!isWin && sudoPassword) setCachedPassword(sudoPassword);
