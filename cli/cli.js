@@ -4,6 +4,7 @@ const { spawn, exec, execSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const https = require("https");
+const http = require("http");
 const os = require("os");
 
 // Native spinner - no external dependency
@@ -470,6 +471,40 @@ function openBrowser(url) {
   });
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function requestAppInitOnce(appPort) {
+  return new Promise((resolve) => {
+    const req = http.get(
+      {
+        hostname: "127.0.0.1",
+        port: appPort,
+        path: "/api/init",
+        timeout: 3000,
+      },
+      (res) => {
+        res.resume();
+        res.on("end", () => resolve(res.statusCode >= 200 && res.statusCode < 300));
+      }
+    );
+    req.on("timeout", () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.on("error", () => resolve(false));
+  });
+}
+
+async function triggerAppInit(appPort) {
+  for (let attempt = 0; attempt < 24; attempt++) {
+    if (await requestAppInitOnce(appPort)) return true;
+    await sleep(500);
+  }
+  return false;
+}
+
 // Find standalone server (bundled in bin/app for published package)
 const standaloneDir = path.join(__dirname, "app");
 const serverPath = path.join(standaloneDir, "server.js");
@@ -568,6 +603,7 @@ function startServer(latestVersion) {
         if (crashLog.length > CRASH_LOG_LINES) crashLog = crashLog.slice(-CRASH_LOG_LINES);
       });
     }
+    triggerAppInit(port).catch(() => {});
     return child;
   }
 

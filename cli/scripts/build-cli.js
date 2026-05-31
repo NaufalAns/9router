@@ -126,7 +126,36 @@ try {
 // Step 2: Clean old app/cli/app if exists
 console.log("2️⃣  Cleaning old app/cli/app...");
 if (fs.existsSync(cliAppDir)) {
-  fs.rmSync(cliAppDir, { recursive: true, force: true });
+  try {
+    fs.rmSync(cliAppDir, { recursive: true, force: true });
+  } catch (e) {
+    if (e.code !== "EBUSY" && e.code !== "EPERM") throw e;
+    try {
+      cleanDirectoryContents(cliAppDir);
+      console.warn("Old app bundle root is locked; cleaned contents in place");
+    } catch (cleanErr) {
+      console.error("Old CLI app bundle is locked and cannot be cleaned.");
+      console.error("Close any terminal or Explorer window inside cli\\app, stop 9router from the tray, then retry.");
+      console.error(cleanErr.message);
+      process.exit(1);
+    }
+  }
+}
+
+function cleanDirectoryContents(dir) {
+  if (!fs.existsSync(dir)) return;
+  const failures = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const target = path.join(dir, entry.name);
+    try {
+      fs.rmSync(target, { recursive: true, force: true });
+    } catch (e) {
+      failures.push(`${target}: ${e.code || e.message}`);
+    }
+  }
+  if (failures.length) {
+    throw new Error(failures.slice(0, 5).join("\n"));
+  }
 }
 console.log("✅ Cleaned\n");
 

@@ -249,9 +249,21 @@ function windowsStartupVbsPath() {
   return path.join(process.env.APPDATA || "", "Microsoft", "Windows", "Start Menu", "Programs", "Startup", `${APP_NAME}.vbs`);
 }
 
+function windowsAutostartLauncherPath() {
+  const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+  return path.join(appData, APP_NAME, "autostart", "9router-autostart.vbs");
+}
+
 function cleanupLegacyWindowsVbs() {
   try {
     const vbsPath = windowsStartupVbsPath();
+    if (fs.existsSync(vbsPath)) fs.unlinkSync(vbsPath);
+  } catch (e) {}
+}
+
+function cleanupWindowsLauncherVbs() {
+  try {
+    const vbsPath = windowsAutostartLauncherPath();
     if (fs.existsSync(vbsPath)) fs.unlinkSync(vbsPath);
   } catch (e) {}
 }
@@ -262,6 +274,10 @@ function encodePowerShell(script) {
 
 function quotePs(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function quoteVbsString(value) {
+  return String(value).replace(/"/g, '""');
 }
 
 function isWindowsAdmin() {
@@ -311,13 +327,22 @@ function enableWindows(cliPath) {
 
   cleanupLegacyWindowsVbs();
 
+  const launcherPath = windowsAutostartLauncherPath();
+  try {
+    fs.mkdirSync(path.dirname(launcherPath), { recursive: true });
+    const vbsContent = `Set WshShell = CreateObject("WScript.Shell")\r\n` +
+      `WshShell.Run """${quoteVbsString(nodePath)}"" ""${quoteVbsString(routerScript)}"" --tray --skip-update", 0, False\r\n`;
+    fs.writeFileSync(launcherPath, vbsContent, "utf8");
+  } catch (e) {
+    return false;
+  }
+
   const script = `
 $ErrorActionPreference = 'Stop'
 $taskName = ${quotePs(WINDOWS_TASK_NAME)}
-$nodePath = ${quotePs(nodePath)}
-$routerScript = ${quotePs(routerScript)}
+$launcherPath = ${quotePs(launcherPath)}
 $user = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
-$action = New-ScheduledTaskAction -Execute $nodePath -Argument ('"' + $routerScript + '" --tray --skip-update')
+$action = New-ScheduledTaskAction -Execute 'wscript.exe' -Argument ('"' + $launcherPath + '"')
 $trigger = New-ScheduledTaskTrigger -AtLogOn -User $user
 $principal = New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Highest
 $settings = New-ScheduledTaskSettingsSet -Hidden -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit (New-TimeSpan -Hours 0)
@@ -329,6 +354,7 @@ Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Pr
 
 function disableWindows() {
   cleanupLegacyWindowsVbs();
+  cleanupWindowsLauncherVbs();
   const script = `
 $ErrorActionPreference = 'SilentlyContinue'
 Unregister-ScheduledTask -TaskName ${quotePs(WINDOWS_TASK_NAME)} -Confirm:$false | Out-Null
