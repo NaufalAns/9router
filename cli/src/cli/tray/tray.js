@@ -66,10 +66,28 @@ async function getMitmEnabled(port) {
   try {
     const { getMitmTrayStatus } = require("./mitmTray");
     const status = await getMitmTrayStatus(port);
-    return !!status.antigravityDnsAutoStartEnabled;
+    return !!(
+      status.antigravityDnsAutoStartEnabled ||
+      (status.running && status.dnsStatus && status.dnsStatus.antigravity === true)
+    );
   } catch (e) {
     return false;
   }
+}
+
+function startMitmMenuRefresh(port, updateItem) {
+  let attempts = 0;
+  const maxAttempts = 90;
+  const refresh = async () => {
+    attempts++;
+    try {
+      const enabled = await getMitmEnabled(port);
+      if (trayInstance) updateItem(enabled);
+    } catch (e) {}
+    if (attempts >= maxAttempts || !trayInstance) clearInterval(timer);
+  };
+  const timer = setInterval(refresh, 1000);
+  refresh();
 }
 
 async function handleClick(index, options, onAutostartUpdate, onMitmUpdate) {
@@ -124,9 +142,9 @@ function initWindowsTray(options) {
       }
     });
 
-    getMitmEnabled(port).then((enabled) => {
-      if (trayInstance) trayInstance.updateItem(MENU_INDEX.MITM_ANTIGRAVITY, getMitmTitle(enabled), true);
-    }).catch(() => {});
+    startMitmMenuRefresh(port, (enabled) => {
+      trayInstance.updateItem(MENU_INDEX.MITM_ANTIGRAVITY, getMitmTitle(enabled), true);
+    });
 
     isWinTray = true;
     return trayInstance;
@@ -207,9 +225,9 @@ function initUnixTray(options) {
       );
     });
 
-    getMitmEnabled(port).then((enabled) => {
-      if (trayInstance) updateItem(MENU_INDEX.MITM_ANTIGRAVITY, getMitmTitle(enabled), "Auto-start MITM and Antigravity DNS");
-    }).catch(() => {});
+    startMitmMenuRefresh(port, (enabled) => {
+      updateItem(MENU_INDEX.MITM_ANTIGRAVITY, getMitmTitle(enabled), "Auto-start MITM and Antigravity DNS");
+    });
 
     if (isV2) {
       trayInstance.ready().catch((err) => {
