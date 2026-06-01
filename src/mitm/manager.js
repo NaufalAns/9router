@@ -245,17 +245,20 @@ async function loadDnsToolState() {
 /**
  * Re-apply DNS for tools previously enabled — called on app startup after MITM running.
  */
-async function restoreToolDNS(sudoPassword) {
-  const state = await loadDnsToolState();
+async function restoreToolDNS(sudoPassword, toolStateOverride = null) {
+  const state = toolStateOverride || await loadDnsToolState();
   const password = sudoPassword || getCachedPassword() || await loadEncryptedPassword();
+  const restored = [];
   for (const [tool, enabled] of Object.entries(state)) {
     if (!enabled || !TOOL_HOSTS[tool]) continue;
     try {
       await addDNSEntry(tool, password);
+      restored.push(tool);
     } catch (e) {
       err(`DNS ${tool}: restore failed — ${e.message}`);
     }
   }
+  return restored;
 }
 
 /**

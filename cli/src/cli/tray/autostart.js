@@ -331,7 +331,8 @@ function enableWindows(cliPath) {
   try {
     fs.mkdirSync(path.dirname(launcherPath), { recursive: true });
     const vbsContent = `Set WshShell = CreateObject("WScript.Shell")\r\n` +
-      `WshShell.Run """${quoteVbsString(nodePath)}"" ""${quoteVbsString(routerScript)}"" --tray --skip-update", 0, False\r\n`;
+      `WshShell.CurrentDirectory = "${quoteVbsString(path.dirname(routerScript))}"\r\n` +
+      `WshShell.Run """${quoteVbsString(nodePath)}"" ""${quoteVbsString(routerScript)}"" --tray --skip-update --startup", 0, False\r\n`;
     fs.writeFileSync(launcherPath, vbsContent, "utf8");
   } catch (e) {
     return false;

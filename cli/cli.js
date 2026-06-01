@@ -75,6 +75,7 @@ let noBrowser = false;
 let skipUpdate = false;
 let showLog = false;
 let trayMode = false;
+let startupMode = false;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === "--port" || args[i] === "-p") {
@@ -92,6 +93,8 @@ for (let i = 0; i < args.length; i++) {
   } else if (args[i] === "--tray" || args[i] === "-t") {
     trayMode = true;
     process.env.TRAY_MODE = "1";
+  } else if (args[i] === "--startup") {
+    startupMode = true;
   } else if (args[i] === "--help" || args[i] === "-h") {
     console.log(`
 Usage: ${APP_NAME} [options]
@@ -102,6 +105,7 @@ Options:
   -n, --no-browser    Don't open browser automatically
   -l, --log           Show server logs (default: hidden)
   -t, --tray          Run in system tray mode (background)
+  --startup           Mark process as OS auto-started (diagnostic logging)
   --skip-update       Skip auto-update check
   -h, --help          Show this help message
   -v, --version       Show version
@@ -138,6 +142,20 @@ function getAppDataDir() {
   return process.platform === "win32"
     ? path.join(process.env.APPDATA || "", "9router")
     : path.join(os.homedir(), ".9router");
+}
+
+function writeStartupLog(message) {
+  if (!startupMode && !trayMode) return;
+  try {
+    const logDir = path.join(getAppDataDir(), "logs");
+    const logFile = path.join(logDir, "cli-startup.log");
+    fs.mkdirSync(logDir, { recursive: true });
+    if (fs.existsSync(logFile) && fs.statSync(logFile).size > 512 * 1024) {
+      fs.writeFileSync(logFile, "");
+    }
+    const ts = new Date().toISOString();
+    fs.appendFileSync(logFile, `[${ts}] ${message}\n`);
+  } catch { }
 }
 
 // Kill PID from file (best-effort, removes file after)
@@ -482,26 +500,50 @@ function requestAppInitOnce(appPort) {
         hostname: "127.0.0.1",
         port: appPort,
         path: "/api/init",
-        timeout: 3000,
+        timeout: 5000,
       },
       (res) => {
-        res.resume();
-        res.on("end", () => resolve(res.statusCode >= 200 && res.statusCode < 300));
+        let body = "";
+        res.on("data", (chunk) => {
+          if (body.length < 4096) body += chunk.toString();
+        });
+        res.on("end", () => {
+          let data = null;
+          try { data = body ? JSON.parse(body) : null; } catch { }
+          const ok = res.statusCode >= 200 && res.statusCode < 300 && data?.ok === true;
+          if (!ok) {
+            writeStartupLog(`/api/init failed: HTTP ${res.statusCode}; body=${body.slice(0, 300)}`);
+          }
+          resolve({ ok, data, statusCode: res.statusCode });
+        });
       }
     );
     req.on("timeout", () => {
       req.destroy();
-      resolve(false);
+      writeStartupLog("/api/init timeout");
+      resolve({ ok: false, data: null, statusCode: 0 });
     });
-    req.on("error", () => resolve(false));
+    req.on("error", (err) => {
+      writeStartupLog(`/api/init error: ${err.message}`);
+      resolve({ ok: false, data: null, statusCode: 0 });
+    });
   });
 }
 
 async function triggerAppInit(appPort) {
-  for (let attempt = 0; attempt < 24; attempt++) {
-    if (await requestAppInitOnce(appPort)) return true;
-    await sleep(500);
+  writeStartupLog(`Starting /api/init warmup on port ${appPort}`);
+  const deadline = Date.now() + 90000;
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    attempt++;
+    const result = await requestAppInitOnce(appPort);
+    if (result.ok) {
+      writeStartupLog(`/api/init succeeded on attempt ${attempt}: ${JSON.stringify(result.data).slice(0, 1000)}`);
+      return true;
+    }
+    await sleep(1000);
   }
+  writeStartupLog("/api/init warmup failed after 90s");
   return false;
 }
 

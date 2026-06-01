@@ -16,6 +16,7 @@ import {
   WATCHDOG_INTERVAL_MS, NETWORK_CHECK_INTERVAL_MS,
 } from "@/lib/tunnel";
 import { getMitmStatus, startMitm, loadEncryptedPassword, initDbHooks, restoreToolDNS, removeAllDNSEntriesSync } from "@/mitm/manager";
+import { getMitmAutoStartState } from "@/mitm/autoStartState";
 import { syncToJson as syncMitmAliasCache } from "@/lib/mitmAliasCache";
 
 // Inject correct paths and DB hooks into manager.js (CJS) from ESM context
@@ -89,41 +90,86 @@ export async function initializeApp() {
 
     startWatchdog();
     startNetworkMonitor();
-    autoStartMitm();
+    const mitm = await autoStartMitm();
+    return { ok: true, mitm };
   } catch (error) {
     console.error("[InitApp] Error:", error);
+    return { ok: false, error: error?.message || "Initialization failed" };
   }
 }
 
 async function autoStartMitm() {
-  if (g.mitmStartInProgress) return;
+  const skipped = {
+    autoStartEnabled: false,
+    attempted: false,
+    started: false,
+    dnsRestored: [],
+    warning: null,
+    error: null,
+  };
+  if (g.mitmStartInProgress) {
+    return { ...skipped, warning: "MITM auto-start already in progress" };
+  }
   g.mitmStartInProgress = true;
   try {
     const settings = await getSettings();
-    if (!settings.mitmEnabled) return;
+    const autoStart = getMitmAutoStartState(settings);
+    if (!autoStart.mitmAutoStartEnabled) return skipped;
+
+    const result = {
+      autoStartEnabled: true,
+      attempted: true,
+      started: false,
+      dnsRestored: [],
+      warning: null,
+      error: null,
+    };
+
     const mitmStatus = await getMitmStatus();
-    if (mitmStatus.running) return;
+    if (mitmStatus.running) {
+      result.started = true;
+      try {
+        result.dnsRestored = await restoreToolDNS(await loadEncryptedPassword(), autoStart.dnsToolAutoStartEnabled);
+        console.log("[InitApp] DNS restored from saved auto-start state");
+      } catch (e) {
+        result.warning = `DNS restore failed: ${e.message}`;
+        console.log("[InitApp] DNS restore failed:", e.message);
+      }
+      return result;
+    }
 
     const password = await loadEncryptedPassword();
     if (!password && process.platform !== "win32") {
+      result.warning = "MITM auto-start enabled but no saved password found";
       console.log("[InitApp] MITM was enabled but no saved password found, skipping auto-start");
-      return;
+      return result;
     }
 
     const keys = await getApiKeys();
     const activeKey = keys.find(k => k.isActive !== false);
 
-    console.log("[InitApp] MITM was enabled, auto-starting...");
+    console.log("[InitApp] MITM auto-start was enabled, starting...");
     await startMitm(activeKey?.key || "sk_9router", password);
+    result.started = true;
     console.log("[InitApp] MITM auto-started");
     try {
-      await restoreToolDNS(password);
-      console.log("[InitApp] DNS restored from saved state");
+      result.dnsRestored = await restoreToolDNS(password, autoStart.dnsToolAutoStartEnabled);
+      console.log("[InitApp] DNS restored from saved auto-start state");
     } catch (e) {
+      result.warning = `DNS restore failed: ${e.message}`;
       console.log("[InitApp] DNS restore failed:", e.message);
     }
+    return result;
   } catch (err) {
     console.log("[InitApp] MITM auto-start failed:", err.message);
+    return {
+      autoStartEnabled: true,
+      attempted: true,
+      started: false,
+      dnsRestored: [],
+      warning: null,
+      error: err.message,
+    };
   } finally {
     g.mitmStartInProgress = false;
   }

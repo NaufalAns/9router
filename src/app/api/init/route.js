@@ -4,8 +4,14 @@ import initializeApp from "@/shared/services/initializeApp";
 // background services without requiring a dashboard page render.
 export async function GET() {
   try {
-    await initializeApp();
-    return Response.json({ ok: true, initialized: true });
+    const result = await initializeApp();
+    if (result?.ok === false) {
+      return Response.json(
+        { ok: false, error: result.error || "Initialization failed" },
+        { status: 500 }
+      );
+    }
+    return Response.json({ ok: true, initialized: true, mitm: result?.mitm || null });
   } catch (error) {
     return Response.json(
       { ok: false, error: error?.message || "Initialization failed" },

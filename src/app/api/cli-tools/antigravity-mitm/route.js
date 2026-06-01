@@ -13,6 +13,7 @@ import {
   initDbHooks,
 } from "@/mitm/manager";
 import { getApiKeys, getSettings, updateSettings } from "@/lib/localDb";
+import { getMitmAutoStartState, buildNextToolAutoStartSettings } from "@/mitm/autoStartState";
 
 initDbHooks(getSettings, updateSettings);
 
@@ -74,7 +75,7 @@ async function getDefaultApiKey() {
 }
 
 function buildStatusResponse(status, settings, hasCachedPassword) {
-  const dnsToolEnabled = settings.dnsToolEnabled || {};
+  const autoStart = getMitmAutoStartState(settings);
   return {
     running: status.running,
     pid: status.pid || null,
@@ -85,8 +86,8 @@ function buildStatusResponse(status, settings, hasCachedPassword) {
     isWin,
     needsSudoPassword: !isWin && !hasCachedPassword && isSudoPasswordRequired(),
     isAdmin: checkIsAdmin(),
-    mitmAutoStartEnabled: settings.mitmEnabled === true,
-    antigravityDnsAutoStartEnabled: dnsToolEnabled.antigravity === true,
+    mitmAutoStartEnabled: autoStart.mitmAutoStartEnabled,
+    antigravityDnsAutoStartEnabled: autoStart.antigravityDnsAutoStartEnabled,
     mitmRouterBaseUrl:
       (settings.mitmRouterBaseUrl && String(settings.mitmRouterBaseUrl).trim()) ||
       DEFAULT_MITM_ROUTER_BASE,
@@ -198,8 +199,10 @@ export async function PATCH(request) {
       const currentDnsToolEnabled = settings.dnsToolEnabled || {};
       const nextDnsToolEnabled = { ...currentDnsToolEnabled, antigravity: nextEnabled };
       const anyToolEnabled = Object.values(nextDnsToolEnabled).some(Boolean);
+      const nextAutoStart = buildNextToolAutoStartSettings(settings, "antigravity", nextEnabled);
 
       await updateSettings({
+        ...nextAutoStart,
         mitmEnabled: nextEnabled ? true : anyToolEnabled,
         dnsToolEnabled: nextDnsToolEnabled,
       });
