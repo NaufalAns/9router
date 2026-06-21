@@ -2,19 +2,45 @@ import os from "os";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { existsSync } from "fs";
-import { cleanupProviderConnections, getSettings, updateSettings, getApiKeys } from "@/lib/localDb";
 import {
-  enableTunnel, enableTailscale,
-  isTunnelManuallyDisabled, isTunnelReconnecting, isTailscaleReconnecting,
-  getTunnelService, getTailscaleService, setTunnelUnexpectedExitCallback,
-  killCloudflared, isCloudflaredRunning, ensureCloudflared,
-  isTailscaleRunning, isTailscaleRunningStrict,
+  cleanupProviderConnections,
+  getSettings,
+  updateSettings,
+  getApiKeys,
+} from "@/lib/localDb";
+import {
+  enableTunnel,
+  enableTailscale,
+  isTunnelManuallyDisabled,
+  isTunnelReconnecting,
+  isTailscaleReconnecting,
+  getTunnelService,
+  getTailscaleService,
+  setTunnelUnexpectedExitCallback,
+  killCloudflared,
+  isCloudflaredRunning,
+  ensureCloudflared,
+  isTailscaleRunning,
+  isTailscaleRunningStrict,
+  isDaemonAlive,
+  startFunnel,
   checkInternet,
-  RESTART_COOLDOWN_MS, NETWORK_SETTLE_MS,
-  WATCHDOG_INTERVAL_MS, NETWORK_CHECK_INTERVAL_MS, VIRTUAL_IFACE_REGEX,
+  RESTART_COOLDOWN_MS,
+  NETWORK_SETTLE_MS,
+  WATCHDOG_INTERVAL_MS,
+  NETWORK_CHECK_INTERVAL_MS,
+  VIRTUAL_IFACE_REGEX,
 } from "@/lib/tunnel";
-import { getMitmStatus, startMitm, loadEncryptedPassword, initDbHooks, restoreToolDNS, removeAllDNSEntriesSync } from "@/mitm/manager";
+import {
+  getMitmStatus,
+  startMitm,
+  loadEncryptedPassword,
+  initDbHooks,
+  restoreToolDNS,
+  removeAllDNSEntriesSync,
+} from "@/mitm/manager";
 import { getMitmAutoStartState } from "@/mitm/autoStartState";
+import { startClaudeAutoPing } from "@/shared/services/claudeAutoPing";
 import { syncToJson as syncMitmAliasCache } from "@/lib/mitmAliasCache";
 
 // Inject correct paths and DB hooks into manager.js (CJS) from ESM context
@@ -25,15 +51,21 @@ import { syncToJson as syncMitmAliasCache } from "@/lib/mitmAliasCache";
       const appSrc = dirname(dirname(thisFile));
       const candidate = join(appSrc, "mitm", "server.js");
       if (existsSync(candidate)) process.env.MITM_SERVER_PATH = candidate;
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
   }
-  try { initDbHooks(getSettings, updateSettings); } catch { /* ignore */ }
+  try {
+    initDbHooks(getSettings, updateSettings);
+  } catch {
+    /* ignore */
+  }
 })();
 
 process.setMaxListeners(20);
 
 // Survive Next.js hot reload
-const g = global.__appSingleton ??= {
+const g = (global.__appSingleton ??= {
   signalHandlersRegistered: false,
   watchdogInterval: null,
   networkMonitorInterval: null,
@@ -43,7 +75,7 @@ const g = global.__appSingleton ??= {
   mitmStartInProgress: false,
   tunnelAutoResumed: false,
   tailscaleAutoResumed: false,
-};
+});
 
 export async function initializeApp() {
   try {
@@ -54,25 +86,39 @@ export async function initializeApp() {
     if (settings.tunnelEnabled && !g.tunnelAutoResumed) {
       g.tunnelAutoResumed = true;
       console.log("[InitApp] Tunnel was enabled, auto-resuming...");
-      safeRestartTunnel("startup").catch((e) => console.log("[InitApp] Tunnel resume failed:", e.message));
+      safeRestartTunnel("startup").catch((e) =>
+        console.log("[InitApp] Tunnel resume failed:", e.message),
+      );
     }
 
     // Auto-resume tailscale (once per process)
     if (settings.tailscaleEnabled && !g.tailscaleAutoResumed) {
       g.tailscaleAutoResumed = true;
       console.log("[InitApp] Tailscale was enabled, auto-resuming...");
-      safeRestartTailscale("startup").catch((e) => console.log("[InitApp] Tailscale resume failed:", e.message));
+      safeRestartTailscale("startup").catch((e) =>
+        console.log("[InitApp] Tailscale resume failed:", e.message),
+      );
     }
 
     if (!g.signalHandlersRegistered) {
       const cleanup = () => {
-        try { removeAllDNSEntriesSync(); } catch { /* best effort */ }
+        try {
+          removeAllDNSEntriesSync();
+        } catch {
+          /* best effort */
+        }
         killCloudflared();
         process.exit();
       };
       process.on("SIGINT", cleanup);
       process.on("SIGTERM", cleanup);
-      process.on("exit", () => { try { removeAllDNSEntriesSync(); } catch { /* ignore */ } });
+      process.on("exit", () => {
+        try {
+          removeAllDNSEntriesSync();
+        } catch {
+          /* ignore */
+        }
+      });
       g.signalHandlersRegistered = true;
     }
 
@@ -88,7 +134,8 @@ export async function initializeApp() {
 
     startWatchdog();
     startNetworkMonitor();
-    const mitm = await autoStartMitm();
+    autoStartMitm();
+    startClaudeAutoPing();
     return { ok: true, mitm };
   } catch (error) {
     console.error("[InitApp] Error:", error);
@@ -127,7 +174,10 @@ async function autoStartMitm() {
     if (mitmStatus.running) {
       result.started = true;
       try {
-        result.dnsRestored = await restoreToolDNS(await loadEncryptedPassword(), autoStart.dnsToolAutoStartEnabled);
+        result.dnsRestored = await restoreToolDNS(
+          await loadEncryptedPassword(),
+          autoStart.dnsToolAutoStartEnabled,
+        );
         console.log("[InitApp] DNS restored from saved auto-start state");
       } catch (e) {
         result.warning = `DNS restore failed: ${e.message}`;
@@ -139,19 +189,24 @@ async function autoStartMitm() {
     const password = await loadEncryptedPassword();
     if (!password && process.platform !== "win32") {
       result.warning = "MITM auto-start enabled but no saved password found";
-      console.log("[InitApp] MITM was enabled but no saved password found, skipping auto-start");
+      console.log(
+        "[InitApp] MITM was enabled but no saved password found, skipping auto-start",
+      );
       return result;
     }
 
     const keys = await getApiKeys();
-    const activeKey = keys.find(k => k.isActive !== false);
+    const activeKey = keys.find((k) => k.isActive !== false);
 
     console.log("[InitApp] MITM auto-start was enabled, starting...");
     await startMitm(activeKey?.key || "sk_9router", password);
     result.started = true;
     console.log("[InitApp] MITM auto-started");
     try {
-      result.dnsRestored = await restoreToolDNS(password, autoStart.dnsToolAutoStartEnabled);
+      result.dnsRestored = await restoreToolDNS(
+        password,
+        autoStart.dnsToolAutoStartEnabled,
+      );
       console.log("[InitApp] DNS restored from saved auto-start state");
     } catch (e) {
       result.warning = `DNS restore failed: ${e.message}`;
@@ -175,7 +230,8 @@ async function autoStartMitm() {
 
 // Cooldown only applies to repeating watchdog ticks (anti hammer-loop).
 // Network/exit events are one-shot transitions → bypass to recover fast.
-const FORCE_RESTART_REASONS = /^(startup|netchange|sleep|sleep\+netchange|online|unexpected-exit)$/;
+const FORCE_RESTART_REASONS =
+  /^(startup|netchange|sleep|sleep\+netchange|online|unexpected-exit)$/;
 
 // ─── Safe restart (4 guards: spawn / cooldown / alive / internet) ────────────
 
@@ -196,9 +252,11 @@ async function safeRestartTunnel(reason) {
     console.log(`[Tunnel] degraded but cooldown active, skip (${reason})`);
     return;
   }
-  if (!await checkInternet()) return;
+  if (!(await checkInternet())) return;
 
-  console.log(`[Tunnel] safeRestart (${reason}) — tunnel unreachable${force ? " [force]" : ""}`);
+  console.log(
+    `[Tunnel] safeRestart (${reason}) — tunnel unreachable${force ? " [force]" : ""}`,
+  );
   try {
     await enableTunnel();
     svc.lastRestartAt = Date.now();
@@ -219,17 +277,34 @@ async function safeRestartTailscale(reason) {
 
   // Tailscale daemon is OS-level with built-in reconnect; trust it when running (even on netchange).
   // Startup uses strict probe — cached state is cold after process/dev reload.
-  const running = reason === "startup" ? isTailscaleRunningStrict() : isTailscaleRunning();
+  const running =
+    reason === "startup"
+      ? await isTailscaleRunningStrict()
+      : isTailscaleRunning();
   if (running) return;
+
+  // Daemon alive but funnel dropped → recover funnel only; never full-restart (preserves login/daemon).
+  if (isDaemonAlive() && svc.activeLocalPort) {
+    try {
+      await startFunnel(svc.activeLocalPort);
+      svc.lastRestartAt = Date.now();
+      console.log("[Tailscale] funnel re-established (daemon alive)");
+    } catch (err) {
+      console.log("[Tailscale] funnel recovery failed:", err.message);
+    }
+    return;
+  }
 
   const force = FORCE_RESTART_REASONS.test(reason);
   if (!force && Date.now() - svc.lastRestartAt < RESTART_COOLDOWN_MS) {
     console.log(`[Tailscale] degraded but cooldown active, skip (${reason})`);
     return;
   }
-  if (!await checkInternet()) return;
+  if (!(await checkInternet())) return;
 
-  console.log(`[Tailscale] safeRestart (${reason}) — daemon not running${force ? " [force]" : ""}`);
+  console.log(
+    `[Tailscale] safeRestart (${reason}) — daemon not running${force ? " [force]" : ""}`,
+  );
   try {
     await enableTailscale();
     svc.lastRestartAt = Date.now();
@@ -298,9 +373,13 @@ function startNetworkMonitor() {
       // Wait for DHCP/DNS to settle before probing
       await new Promise((r) => setTimeout(r, NETWORK_SETTLE_MS));
 
-      const reason = onlineEdge ? "online"
-        : wasSleep && networkChanged ? "sleep+netchange"
-        : wasSleep ? "sleep" : "netchange";
+      const reason = onlineEdge
+        ? "online"
+        : wasSleep && networkChanged
+          ? "sleep+netchange"
+          : wasSleep
+            ? "sleep"
+            : "netchange";
       safeRestartTunnel(reason).catch(() => {});
       safeRestartTailscale(reason).catch(() => {});
     } catch (err) {
