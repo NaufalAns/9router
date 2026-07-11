@@ -38,7 +38,11 @@ async function resolveMitmRouterBaseUrl() {
   }
 }
 
-const MITM_PORT = 443;
+const DEFAULT_MITM_PORT = 443;
+const configuredMitmPort = Number.parseInt(process.env.MITM_PORT, 10);
+const MITM_PORT = configuredMitmPort >= 1 && configuredMitmPort <= 65535
+  ? configuredMitmPort
+  : DEFAULT_MITM_PORT;
 const MITM_WIN_NODE_PORT = 8443;
 const PID_FILE = path.join(MITM_DIR, ".mitm.pid");
 const LOCK_FILE = path.join(MITM_DIR, ".mitm.lock");
@@ -97,11 +101,11 @@ const SERVER_PATH = ensureRuntimeServer(resolveBundledServerPath());
 const ENCRYPT_ALGO = "aes-256-gcm";
 const ENCRYPT_SALT = "9router-mitm-pwd";
 
-function getProcessUsingPort443() {
+function getProcessUsingMitmPort() {
   try {
     if (IS_WIN) {
       const psCmd = `powershell -NonInteractive -WindowStyle Hidden -Command ` +
-        `"$c = Get-NetTCPConnection -LocalPort 443 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c) { $c.OwningProcess } else { 0 }"`;
+        `"$c = Get-NetTCPConnection -LocalPort ${MITM_PORT} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; if ($c) { $c.OwningProcess } else { 0 }"`;
       const pidStr = execSync(psCmd, { encoding: "utf8", windowsHide: true }).trim();
       const pid = parseInt(pidStr, 10);
       if (pid && pid > 4) {
@@ -110,7 +114,7 @@ function getProcessUsingPort443() {
         if (processMatch) return processMatch[1].replace(".exe", "");
       }
     } else {
-      const result = execSync(`${LSOF_BIN} -i :443`, { encoding: "utf8", windowsHide: true });
+      const result = execSync(`${LSOF_BIN} -i :${MITM_PORT}`, { encoding: "utf8", windowsHide: true });
       const lines = result.trim().split("\n");
       if (lines.length > 1) return lines[1].split(/\s+/)[0];
     }
@@ -274,7 +278,7 @@ async function hasDnsPrivilege() {
   return !!pwd;
 }
 
-function checkPort443Free() {
+function checkMitmPortFree() {
   return new Promise((resolve) => {
     const tester = net.createServer();
     tester.once("error", (err) => {
@@ -286,12 +290,12 @@ function checkPort443Free() {
   });
 }
 
-function getPort443Owner(sudoPassword) {
+function getMitmPortOwner(sudoPassword) {
   return new Promise((resolve) => {
     if (IS_WIN) {
       const psCmd = `powershell -NonInteractive -WindowStyle Hidden -Command "` +
-        `$c = Get-NetTCPConnection -LocalPort 443 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; ` +
-        `if ($c) { $c.OwningProcess } else { 0 }"`;    
+        `$c = Get-NetTCPConnection -LocalPort ${MITM_PORT} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1; ` +
+        `if ($c) { $c.OwningProcess } else { 0 }"`;
       exec(psCmd, { windowsHide: true }, (err, stdout) => {
         if (err) return resolve(null);
         const pid = parseInt(stdout.trim(), 10);
@@ -302,8 +306,8 @@ function getPort443Owner(sudoPassword) {
         });
       });
     } else {
-      // Only find process actually LISTENING on TCP port 443
-      exec(`${LSOF_BIN} -nP -iTCP:443 -sTCP:LISTEN -t`, { windowsHide: true }, (err, stdout) => {
+      // Only find process actually LISTENING on the configured MITM port
+      exec(`${LSOF_BIN} -nP -iTCP:${MITM_PORT} -sTCP:LISTEN -t`, { windowsHide: true }, (err, stdout) => {
         if (err || !stdout?.trim()) return resolve(null);
         const pid = parseInt(stdout.trim().split("\n")[0], 10);
         if (!pid || isNaN(pid)) return resolve(null);
@@ -452,7 +456,7 @@ async function scheduleMitmRestart(apiKey) {
 /**
  * Start MITM server only (cert + server, no DNS)
  */
-async function killPort443Owner(owner, sudoPassword) {
+async function killMitmPortOwner(owner, sudoPassword) {
   if (!owner || !owner.pid) return;
   if (IS_WIN) {
     try {
@@ -508,18 +512,18 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
     await killLeftoverMitm(sudoPassword);
 
   if (!IS_WIN) {
-    const portStatus = await checkPort443Free();
+    const portStatus = await checkMitmPortFree();
     if (portStatus === "in-use" || portStatus === "no-permission") {
-      const owner = await getPort443Owner(sudoPassword);
+      const owner = await getMitmPortOwner(sudoPassword);
       if (owner) {
         const shortName = owner.name.includes("/")
           ? owner.name.split("/").filter(Boolean).pop()
           : owner.name;
         if (forceKillPort443) {
-          log(`Killing process on port 443 (PID ${owner.pid}, name=${shortName})...`);
-          await killPort443Owner(owner, sudoPassword);
+          log(`Killing process on port ${MITM_PORT} (PID ${owner.pid}, name=${shortName})...`);
+          await killMitmPortOwner(owner, sudoPassword);
         } else {
-          const e = new Error(`Port 443 is already in use by "${shortName}" (PID ${owner.pid}).`);
+          const e = new Error(`Port ${MITM_PORT} is already in use by "${shortName}" (PID ${owner.pid}).`);
           e.code = "PORT_443_BUSY";
           e.portOwner = { pid: owner.pid, name: shortName };
           throw e;
@@ -581,14 +585,14 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
   const mitmRouterBase = await resolveMitmRouterBaseUrl();
   log(`🚀 Starting server... (router: ${mitmRouterBase})`);
   if (IS_WIN) {
-    // Check port 443 — ask user before killing
-    const winOwner = await getPort443Owner(sudoPassword);
+    // Check the configured MITM port — ask user before killing
+    const winOwner = await getMitmPortOwner(sudoPassword);
     if (winOwner) {
       if (forceKillPort443) {
-        log(`Killing process on port 443 (PID ${winOwner.pid}, name=${winOwner.name})...`);
-        await killPort443Owner(winOwner, sudoPassword);
+        log(`Killing process on port ${MITM_PORT} (PID ${winOwner.pid}, name=${winOwner.name})...`);
+        await killMitmPortOwner(winOwner, sudoPassword);
       } else {
-        const e = new Error(`Port 443 is already in use by "${winOwner.name}" (PID ${winOwner.pid}).`);
+        const e = new Error(`Port ${MITM_PORT} is already in use by "${winOwner.name}" (PID ${winOwner.pid}).`);
         e.code = "PORT_443_BUSY";
         e.portOwner = { pid: winOwner.pid, name: winOwner.name };
         throw e;
@@ -610,6 +614,7 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
           ROUTER_API_KEY: apiKey,
           NODE_ENV: "production",
           MITM_ROUTER_BASE: mitmRouterBase,
+          MITM_PORT: String(MITM_PORT),
         },
       }
     );
@@ -622,6 +627,7 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
       `HOME=${shellQuoteSingle(os.homedir())}`,
       `ROUTER_API_KEY=${shellQuoteSingle(apiKey)}`,
       `MITM_ROUTER_BASE=${shellQuoteSingle(mitmRouterBase)}`,
+      `MITM_PORT=${MITM_PORT}`,
       "NODE_ENV=production",
       shellQuoteSingle(process.execPath),
       shellQuoteSingle(effectiveServerPath),
@@ -644,6 +650,7 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
         ROUTER_API_KEY: apiKey,
         NODE_ENV: "production",
         MITM_ROUTER_BASE: mitmRouterBase,
+        MITM_PORT: String(MITM_PORT),
       },
     });
   }
@@ -707,10 +714,10 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
   const health = await pollMitmHealth(8000, MITM_PORT);
   if (!health) {
     if (serverProcess && !serverProcess.killed) { try { serverProcess.kill(); } catch { /* ignore */ } serverProcess = null; }
-    const processUsing443 = getProcessUsingPort443();
-    const portInfo = processUsing443 ? ` Port 443 already in use by ${processUsing443}.` : "";
-    const reason = startError || `Check sudo password or port 443 access.${portInfo}`;
-    throw new Error(`MITM server failed to start. ${reason}`);
+    const processUsingMitmPort = getProcessUsingMitmPort();
+    const portInfo = processUsingMitmPort ? ` Port ${MITM_PORT} already in use by ${processUsingMitmPort}.` : "";
+    const reason = startError || `Check sudo password or port ${MITM_PORT} access.${portInfo}`;
+    throw new Error(`MITM server failed to start on port ${MITM_PORT}. ${reason}`);
   }
 
   if (_updateSettings) await _updateSettings({ mitmCertInstalled: true }).catch(() => { });

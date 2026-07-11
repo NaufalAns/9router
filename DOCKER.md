@@ -52,12 +52,16 @@ Container path: `/app/data/db/data.sqlite`
 
 ## Optional env vars
 
+`MITM_PORT` controls the HTTPS MITM listener used by CLI integrations. It defaults to `443`; set it to another available port when port 443 is unavailable (for example, `-e MITM_PORT=8443`).
+
+
 ```bash
 docker run -d \
   -p 20128:20128 \
   -v "$HOME/.9router:/app/data" \
   -e DATA_DIR=/app/data \
   -e PORT=20128 \
+  -e MITM_PORT=443 \
   -e HOSTNAME=0.0.0.0 \
   -e DEBUG=true \
   --name 9router \
@@ -74,10 +78,12 @@ services:
     image: decolua/9router:latest
     ports:
       - "20128:20128"
+      - "${MITM_PORT:-443}:${MITM_PORT:-443}"
     volumes:
       - "$HOME/.9router:/app/data"
     environment:
       DATA_DIR: /app/data
+      MITM_PORT: ${MITM_PORT:-443}
       HEADROOM_URL: http://headroom:8787
     depends_on:
       - headroom

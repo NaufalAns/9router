@@ -12,7 +12,11 @@ const { DATA_DIR, MITM_DIR } = require("./paths");
 const { getCertForDomain } = require("./cert/generate");
 const { getMitmAlias } = require("./dbReader");
 const { applyAntigravityIdeVersionOverride } = require("./antigravityIdeVersion");
-const LOCAL_PORT = 443;
+const DEFAULT_MITM_PORT = 443;
+const configuredMitmPort = Number.parseInt(process.env.MITM_PORT, 10);
+const LOCAL_PORT = configuredMitmPort >= 1 && configuredMitmPort <= 65535
+  ? configuredMitmPort
+  : DEFAULT_MITM_PORT;
 const IS_WIN = process.platform === "win32";
 const ENABLE_FILE_LOG = IS_DEV;
 
