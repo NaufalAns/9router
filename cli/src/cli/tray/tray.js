@@ -56,13 +56,22 @@ function initTray(options) {
 /**
  * Build menu items array shared between platforms
  */
+function getAutostartTitle(enabled) {
+  if (process.platform === "win32") {
+    return enabled ? "✓ Auto-start as Admin Enabled" : "Enable Auto-start as Admin";
+  }
+  return enabled ? "✓ Auto-start Enabled" : "Enable Auto-start";
+}
+
 function buildMenuItems(port, autostartEnabled) {
   return [
     { title: `9Router (Port ${port})`, tooltip: "Server is running", enabled: false },
     { title: "Open Dashboard", tooltip: "Open in browser", enabled: true },
     {
-      title: autostartEnabled ? "✓ Auto-start Enabled" : "Enable Auto-start",
-      tooltip: "Run on OS startup",
+      title: getAutostartTitle(autostartEnabled),
+      tooltip: process.platform === "win32"
+        ? "Run elevated on Windows login (one-time UAC setup)"
+        : "Run on OS startup",
       enabled: true
     },
     { title: "Quit", tooltip: "Stop server and exit", enabled: true }
@@ -96,10 +105,11 @@ function handleClick(index, options, onAutostartToggle) {
     const enabled = getAutostartEnabled();
     try {
       const { enableAutoStart, disableAutoStart } = require("./autostart");
-      if (enabled) disableAutoStart();
-      else enableAutoStart();
-      onAutostartToggle(!enabled);
-    } catch (e) {}
+      const success = enabled ? disableAutoStart() : enableAutoStart();
+      onAutostartToggle(success ? getAutostartEnabled() : enabled);
+    } catch (e) {
+      onAutostartToggle(enabled);
+    }
   } else if (index === MENU_INDEX.QUIT) {
     console.log("\n👋 Shutting down...");
     if (onQuit) onQuit();
@@ -125,8 +135,7 @@ function initWindowsTray(options) {
       items,
       onClick: (index) => {
         handleClick(index, options, (newEnabled) => {
-          const newTitle = newEnabled ? "✓ Auto-start Enabled" : "Enable Auto-start";
-          trayInstance.updateItem(MENU_INDEX.AUTOSTART, newTitle, true);
+          trayInstance.updateItem(MENU_INDEX.AUTOSTART, getAutostartTitle(newEnabled), true);
         });
       }
     });
@@ -216,7 +225,7 @@ function initUnixTray(options) {
         trayInstance.sendAction({
           type: "update-item",
           item: {
-            title: newEnabled ? "✓ Auto-start Enabled" : "Enable Auto-start",
+            title: getAutostartTitle(newEnabled),
             tooltip: "Run on OS startup",
             enabled: true
           },

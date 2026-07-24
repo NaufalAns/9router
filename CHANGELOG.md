@@ -1,6 +1,7 @@
 # v0.5.40 (2026-07-20)
 
 ## Features
+- **Windows CLI**: run tray auto-start elevated via Task Scheduler for automatic MITM resume
 - **i18n**: add Khmer (km) translations
 - **CLI tools**: configure Grok Build subagent models
 - **Kimi**: merge OAuth into dual-auth provider, add K3 / K2.7 models

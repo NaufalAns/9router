@@ -1,10 +1,11 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
-const { execSync } = require("child_process");
+const { execFileSync, execSync } = require("child_process");
 
 const APP_NAME = "9router";
 const APP_LABEL = "com.9router.autostart";
+const WINDOWS_TASK_PREFIX = "9Router Auto-start";
 
 /**
  * Resolve the absolute path to this package's cli.js.
@@ -98,8 +99,7 @@ function isAutoStartEnabled() {
         return false;
       }
     } else if (platform === "win32") {
-      const startupPath = path.join(process.env.APPDATA || "", "Microsoft", "Windows", "Start Menu", "Programs", "Startup", `${APP_NAME}.vbs`);
-      return fs.existsSync(startupPath);
+      return isWindowsTaskEnabled();
     } else if (platform === "linux") {
       const desktopPath = path.join(os.homedir(), ".config", "autostart", `${APP_NAME}.desktop`);
       return fs.existsSync(desktopPath);
@@ -236,30 +236,214 @@ function disableMacOS() {
 
 // ============ Windows ============
 
+function getWindowsLegacyVbsPath() {
+  return path.join(
+    process.env.APPDATA || "",
+    "Microsoft",
+    "Windows",
+    "Start Menu",
+    "Programs",
+    "Startup",
+    `${APP_NAME}.vbs`
+  );
+}
+
+function quotePowerShell(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function runPowerShell(script, elevated = false) {
+  const encoded = Buffer.from(script, "utf16le").toString("base64");
+  const args = [
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy", "Bypass",
+    "-EncodedCommand", encoded
+  ];
+
+  if (!elevated || isWindowsAdmin()) {
+    execFileSync("powershell.exe", args, {
+      stdio: "ignore",
+      timeout: 30000,
+      windowsHide: true
+    });
+    return;
+  }
+
+  // This UAC prompt is required only while creating/removing the task. The task
+  // itself starts with a highest-privilege token at future Windows logins.
+  const wrapper = `
+    $ErrorActionPreference = 'Stop'
+    try {
+      $process = Start-Process -FilePath 'powershell.exe' -ArgumentList @(
+        '-NoProfile','-NonInteractive','-ExecutionPolicy','Bypass',
+        '-EncodedCommand','${encoded}'
+      ) -Verb RunAs -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
+      if ($null -eq $process) { exit 1 }
+      exit $process.ExitCode
+    } catch {
+      Write-Error $_
+      exit 1
+    }
+  `;
+  const wrapperEncoded = Buffer.from(wrapper, "utf16le").toString("base64");
+  execFileSync("powershell.exe", [
+    "-NoProfile",
+    "-NonInteractive",
+    "-ExecutionPolicy", "Bypass",
+    "-EncodedCommand", wrapperEncoded
+  ], {
+    stdio: "ignore",
+    timeout: 120000,
+    windowsHide: true
+  });
+}
+
+function isWindowsAdmin() {
+  try {
+    const command = [
+      "$identity = [Security.Principal.WindowsIdentity]::GetCurrent()",
+      "$principal = New-Object Security.Principal.WindowsPrincipal($identity)",
+      "$admin = [Security.Principal.WindowsBuiltInRole]::Administrator",
+      "if ($principal.IsInRole($admin)) { exit 0 } else { exit 1 }"
+    ].join("; ");
+    execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], {
+      stdio: "ignore",
+      timeout: 5000,
+      windowsHide: true
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isCurrentWindowsUserAdminMember() {
+  try {
+    const whoamiPath = path.join(
+      process.env.SystemRoot || "C:\\Windows",
+      "System32",
+      "whoami.exe"
+    );
+    const groups = execFileSync(whoamiPath, ["/groups", "/fo", "csv", "/nh"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000,
+      windowsHide: true
+    });
+    // Unelevated administrator tokens list this SID as "deny only"; its
+    // presence still means Task Scheduler can request the full token at logon.
+    return groups.includes("S-1-5-32-544");
+  } catch {
+    return false;
+  }
+}
+
+function getCurrentWindowsIdentity() {
+  try {
+    const command = [
+      "$identity = [Security.Principal.WindowsIdentity]::GetCurrent()",
+      "Write-Output ($identity.Name + '|' + $identity.User.Value)"
+    ].join("; ");
+    const output = execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", command], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000,
+      windowsHide: true
+    }).trim();
+    const separator = output.lastIndexOf("|");
+    if (separator <= 0) return null;
+    return {
+      name: output.slice(0, separator),
+      sid: output.slice(separator + 1)
+    };
+  } catch {
+    return null;
+  }
+}
+
+function getWindowsTaskName(identity = getCurrentWindowsIdentity()) {
+  if (!identity?.sid) return null;
+  return `${WINDOWS_TASK_PREFIX} ${identity.sid}`;
+}
+
+function getWindowsTaskXml(taskName = getWindowsTaskName()) {
+  if (!taskName) return null;
+  try {
+    return execFileSync("schtasks.exe", ["/Query", "/TN", taskName, "/XML"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 5000,
+      windowsHide: true
+    });
+  } catch {
+    return null;
+  }
+}
+
+function isWindowsTaskEnabled() {
+  const xml = getWindowsTaskXml();
+  if (!xml) return false;
+
+  // Task Scheduler XML may omit Settings/Enabled because true is the default.
+  const settings = xml.match(/<Settings[^>]*>([\s\S]*?)<\/Settings>/i)?.[1] || "";
+  const enabled = settings.match(/<Enabled>(true|false)<\/Enabled>/i)?.[1];
+  return enabled ? enabled.toLowerCase() === "true" : true;
+}
+
 function enableWindows(cliPath) {
-  const startupDir = path.join(process.env.APPDATA || "", "Microsoft", "Windows", "Start Menu", "Programs", "Startup");
-  const vbsPath = path.join(startupDir, `${APP_NAME}.vbs`);
-
-  if (!fs.existsSync(startupDir)) return false;
-
   const nodePath = process.execPath;
   const routerScript = getCliJsPath(cliPath);
-  if (!routerScript) return false;
+  const identity = getCurrentWindowsIdentity();
+  const taskName = getWindowsTaskName(identity);
+  if (!routerScript || !identity || !taskName) return false;
+  if (!isCurrentWindowsUserAdminMember()) {
+    throw new Error("Windows auto-start as Admin requires the current user to be an Administrator");
+  }
 
-  // Run node + cli.js directly, hidden window. Avoids the fragile
-  // `9router.cmd` lookup that depended on the npm prefix path.
-  const vbsContent = `Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run """${nodePath}"" ""${routerScript}"" --tray --skip-update", 0, False
-`;
-  fs.writeFileSync(vbsPath, vbsContent);
+  // The encoded action keeps the console hidden and avoids command-line quoting
+  // problems for Node/NVM/npm paths containing spaces or apostrophes.
+  const launchScript = `& ${quotePowerShell(nodePath)} ${quotePowerShell(routerScript)} --tray --skip-update`;
+  const launchEncoded = Buffer.from(launchScript, "utf16le").toString("base64");
+  const actionArgs = `-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -EncodedCommand ${launchEncoded}`;
+  const taskScript = `
+    $ErrorActionPreference = 'Stop'
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ${quotePowerShell(actionArgs)} -WorkingDirectory ${quotePowerShell(path.dirname(routerScript))}
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User ${quotePowerShell(identity.name)}
+    $principal = New-ScheduledTaskPrincipal -UserId ${quotePowerShell(identity.name)} -LogonType Interactive -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+    Register-ScheduledTask -TaskName ${quotePowerShell(taskName)} -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force -ErrorAction Stop | Out-Null
+  `;
+
+  runPowerShell(taskScript, true);
+
+  if (!isWindowsTaskEnabled()) {
+    throw new Error("Windows auto-start task was not registered or is disabled");
+  }
+
+  // Migrate the previous non-admin Startup entry only after task verification.
+  try { fs.unlinkSync(getWindowsLegacyVbsPath()); } catch {}
   return true;
 }
 
 function disableWindows() {
-  const vbsPath = path.join(process.env.APPDATA || "", "Microsoft", "Windows", "Start Menu", "Programs", "Startup", `${APP_NAME}.vbs`);
-  if (fs.existsSync(vbsPath)) {
-    fs.unlinkSync(vbsPath);
-  }
+  const taskName = getWindowsTaskName();
+  if (!taskName) return false;
+
+  const taskScript = `
+    $ErrorActionPreference = 'Stop'
+    $tasks = @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskName -eq ${quotePowerShell(taskName)} })
+    if ($tasks.Count -gt 0) {
+      $tasks | Unregister-ScheduledTask -Confirm:$false -ErrorAction Stop
+    }
+    $remaining = @(Get-ScheduledTask -ErrorAction Stop | Where-Object { $_.TaskName -eq ${quotePowerShell(taskName)} })
+    if ($remaining.Count -gt 0) {
+      throw 'Windows auto-start task could not be removed'
+    }
+  `;
+  runPowerShell(taskScript, true);
+
+  try { fs.unlinkSync(getWindowsLegacyVbsPath()); } catch {}
   return true;
 }
 
