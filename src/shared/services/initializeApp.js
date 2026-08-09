@@ -131,23 +131,35 @@ async function autoStartMitm(settings) {
   try {
     if (!settings.mitmEnabled) return;
     const mitmStatus = await getMitmStatus();
-    if (mitmStatus.running) return;
-
     const password = await loadEncryptedPassword();
-    if (!password && process.platform !== "win32") {
-      console.log("[InitApp] MITM was enabled but no saved password found, skipping auto-start");
-      return;
+
+    if (!mitmStatus.running) {
+      if (!password && process.platform !== "win32") {
+        console.log("[InitApp] MITM was enabled but no saved password found, skipping auto-start");
+        return;
+      }
+
+      const keys = await getApiKeys();
+      const activeKey = keys.find(k => k.isActive !== false);
+
+      console.log("[InitApp] MITM was enabled, auto-starting...");
+      await startMitm(activeKey?.key || "sk_9router", password);
+      console.log("[InitApp] MITM auto-started");
+    } else {
+      console.log(`[InitApp] MITM already running (PID: ${mitmStatus.pid || "unknown"})`);
     }
 
-    const keys = await getApiKeys();
-    const activeKey = keys.find(k => k.isActive !== false);
-
-    console.log("[InitApp] MITM was enabled, auto-starting...");
-    await startMitm(activeKey?.key || "sk_9router", password);
-    console.log("[InitApp] MITM auto-started");
+    // App shutdown removes hosts entries but the MITM child can briefly survive
+    // (especially on Windows). Always reconcile saved DNS state, even when an
+    // existing MITM process was reused instead of starting a new one.
     try {
-      await restoreToolDNS(password);
-      console.log("[InitApp] DNS restored from saved state");
+      const dnsRestore = await restoreToolDNS(password);
+      if (dnsRestore.failed.length > 0) {
+        const tools = dnsRestore.failed.map(({ tool }) => tool).join(", ");
+        console.log(`[InitApp] DNS restore failed for: ${tools}`);
+      } else {
+        console.log("[InitApp] DNS restored from saved state");
+      }
     } catch (e) {
       console.log("[InitApp] DNS restore failed:", e.message);
     }

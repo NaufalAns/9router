@@ -6,6 +6,7 @@ const readline = require("readline");
 
 let psProcess = null;
 let clickHandler = null;
+let menuOpenHandler = null;
 
 /**
  * Send JSON command to PowerShell tray process via stdin
@@ -18,13 +19,14 @@ function sendCommand(cmd) {
 
 /**
  * Initialize Windows tray using PowerShell NotifyIcon
- * @param {Object} options - { iconPath, tooltip, items, onClick }
+ * @param {Object} options - { iconPath, tooltip, items, onClick, onMenuOpen }
  *   items: [{ title, enabled }]
  * @returns {Object|null} controller with sendAction/kill
  */
 function initWinTray(options) {
-  const { iconPath, tooltip, items, onClick } = options;
+  const { iconPath, tooltip, items, onClick, onMenuOpen } = options;
   clickHandler = onClick;
+  menuOpenHandler = onMenuOpen;
 
   const scriptPath = path.join(__dirname, "tray.ps1");
 
@@ -53,6 +55,8 @@ function initWinTray(options) {
       const evt = JSON.parse(line);
       if (evt.type === "click" && clickHandler) {
         clickHandler(evt.index);
+      } else if (evt.type === "menu-open" && menuOpenHandler) {
+        menuOpenHandler();
       }
     } catch (e) {}
   });

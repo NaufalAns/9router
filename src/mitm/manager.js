@@ -249,14 +249,20 @@ async function loadDnsToolState() {
 async function restoreToolDNS(sudoPassword) {
   const state = await loadDnsToolState();
   const password = sudoPassword || getCachedPassword() || await loadEncryptedPassword();
+  const result = { restored: [], failed: [] };
+
   for (const [tool, enabled] of Object.entries(state)) {
     if (!enabled || !TOOL_HOSTS[tool]) continue;
     try {
       await addDNSEntry(tool, password);
+      result.restored.push(tool);
     } catch (e) {
+      result.failed.push({ tool, error: e.message });
       err(`DNS ${tool}: restore failed — ${e.message}`);
     }
   }
+
+  return result;
 }
 
 /**

@@ -128,15 +128,18 @@ function initWindowsTray(options) {
     const iconPath = path.join(__dirname, "icon.ico");
     const autostartEnabled = getAutostartEnabled();
     const items = buildMenuItems(port, autostartEnabled);
+    const updateAutostartItem = (enabled = getAutostartEnabled()) => {
+      if (!trayInstance) return;
+      trayInstance.updateItem(MENU_INDEX.AUTOSTART, getAutostartTitle(enabled), true);
+    };
 
     trayInstance = initWinTray({
       iconPath,
       tooltip: `9Router - Port ${port}`,
       items,
+      onMenuOpen: () => updateAutostartItem(),
       onClick: (index) => {
-        handleClick(index, options, (newEnabled) => {
-          trayInstance.updateItem(MENU_INDEX.AUTOSTART, getAutostartTitle(newEnabled), true);
-        });
+        handleClick(index, options, updateAutostartItem);
       }
     });
 
