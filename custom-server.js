@@ -14,6 +14,20 @@ const PEER_TOKEN = crypto.randomBytes(24).toString("hex");
 process.env.NINEROUTER_PEER_TOKEN = PEER_TOKEN;
 
 let backgroundRefreshStarted = false;
+let appBootstrapStarted = false;
+
+function startAppBootstrapFromCustomServer() {
+  if (appBootstrapStarted) return;
+  appBootstrapStarted = true;
+  const modPath = path.join(__dirname, "src", "shared", "services", "bootstrap.js");
+  if (fs.existsSync(modPath)) {
+    import(pathToFileURL(modPath).href).catch((e) => {
+      if (process.env.DEBUG_BOOTSTRAP) {
+        console.error("[Bootstrap] import failed:", e && e.message ? e.message : e);
+      }
+    });
+  }
+}
 
 function startBackgroundTokenRefreshFromCustomServer() {
   if (backgroundRefreshStarted) return;
@@ -75,6 +89,7 @@ http.createServer = (...args) => {
   const server = origCreate(...rest, wrapped);
   server.once("listening", () => {
     startBackgroundTokenRefreshFromCustomServer();
+    startAppBootstrapFromCustomServer();
   });
   const origEmit = server.emit;
   // JBR 25 sends h2c upgrades that the HTTP/1.1 server would otherwise close.
