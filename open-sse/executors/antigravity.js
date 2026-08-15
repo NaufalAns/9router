@@ -362,19 +362,29 @@ export class AntigravityExecutor extends BaseExecutor {
   }
 
   // Parse retry time from Antigravity error message body
-  // Format: "Your quota will reset after 2h7m23s" or "1h30m" or "45m" or "30s"
+  // Format: "Your quota will reset after 2h7m23s" or "2h 7m 23s" or "1h30m" or "45m" or "30s"
   parseRetryFromErrorMessage(errorMessage) {
     if (!errorMessage || typeof errorMessage !== "string") return null;
 
-    const match = errorMessage.match(/reset after (\d+h)?(\d+m)?(\d+s)?/i);
-    if (!match) return null;
+    const match = errorMessage.match(/reset after\s*(?:(\d+)\s*h)?\s*(?:(\d+)\s*m)?\s*(?:(\d+)\s*s)?/i);
+    if (match && (match[1] || match[2] || match[3])) {
+      let totalMs = 0;
+      if (match[1]) totalMs += parseInt(match[1], 10) * 3600 * 1000; // hours
+      if (match[2]) totalMs += parseInt(match[2], 10) * 60 * 1000; // minutes
+      if (match[3]) totalMs += parseInt(match[3], 10) * 1000; // seconds
+      if (totalMs > 0) return totalMs;
+    }
 
-    let totalMs = 0;
-    if (match[1]) totalMs += parseInt(match[1]) * 3600 * 1000; // hours
-    if (match[2]) totalMs += parseInt(match[2]) * 60 * 1000; // minutes
-    if (match[3]) totalMs += parseInt(match[3]) * 1000; // seconds
+    const tryAgainMatch = errorMessage.match(/(?:try again|retry)\s+(?:in|after)\s+(\d+)\s*(second|sec|minute|min|hour|hr)s?/i);
+    if (tryAgainMatch) {
+      const val = parseInt(tryAgainMatch[1], 10);
+      const unit = tryAgainMatch[2].toLowerCase();
+      if (unit.startsWith("s")) return val * 1000;
+      if (unit.startsWith("m")) return val * 60 * 1000;
+      if (unit.startsWith("h")) return val * 3600 * 1000;
+    }
 
-    return totalMs > 0 ? totalMs : null;
+    return null;
   }
 
   extractErrorMessage(errorJson, bodyText = "") {
@@ -384,6 +394,50 @@ export class AntigravityExecutor extends BaseExecutor {
       errorJson?.error,
       bodyText,
     ].filter(Boolean).map(v => typeof v === "string" ? v : JSON.stringify(v)).join("\n");
+  }
+
+  // Parse upstream error details and compute precise resetsAtMs for account-level/model-level locks
+  parseError(response, bodyText) {
+    const base = super.parseError(response, bodyText);
+    let errorJson = null;
+    try {
+      errorJson = bodyText ? JSON.parse(bodyText) : null;
+    } catch {
+      // ignore JSON parse error
+    }
+
+    const errorMessage = this.extractErrorMessage(errorJson, bodyText);
+    if (errorMessage) {
+      base.message = errorMessage;
+    }
+
+    let retryMs = this.parseRetryHeaders(response.headers);
+
+    if (!retryMs && errorJson?.error?.details && Array.isArray(errorJson.error.details)) {
+      for (const d of errorJson.error.details) {
+        if (d?.["@type"] === "type.googleapis.com/google.rpc.RetryInfo" && d?.retryDelay) {
+          const match = String(d.retryDelay).match(/^(\d+(?:\.\d+)?)s?$/);
+          if (match) {
+            retryMs = Math.round(parseFloat(match[1]) * 1000);
+            break;
+          }
+        }
+      }
+    }
+
+    if (!retryMs) {
+      retryMs = this.parseRetryFromErrorMessage(errorMessage);
+    }
+
+    if (retryMs && retryMs > 0) {
+      base.resetsAtMs = Date.now() + retryMs;
+      base.retryAfter = Math.ceil(retryMs / 1000);
+    } else if (response.status === HTTP_STATUS.RATE_LIMITED || /quota|resource_exhausted|too many requests/i.test(errorMessage)) {
+      // Default rate limit cooldown (5 minutes) when upstream does not specify exact reset timestamp
+      base.resetsAtMs = Date.now() + 5 * 60 * 1000;
+    }
+
+    return base;
   }
 
   isTransientAntigravityError(status, message) {
@@ -413,6 +467,11 @@ export class AntigravityExecutor extends BaseExecutor {
       retryMs = this.parseRetryFromErrorMessage(errorMessage);
     }
     if (retryMs) return retryMs <= MAX_RETRY_AFTER_MS ? retryMs : false;
+
+    // Check if error is quota exhaustion — veto in-flight retries so account fallback triggers immediately
+    if (/quota|resource.*exhausted|insufficient_quota|too many requests/i.test(errorMessage)) {
+      return false;
+    }
 
     if (!this.isTransientAntigravityError(response.status, errorMessage)) return false;
 

@@ -45,9 +45,16 @@ export class GeminiCLIExecutor extends BaseExecutor {
         for (const d of details) {
           if (d?.["@type"] === "type.googleapis.com/google.rpc.RetryInfo" && d?.retryDelay) {
             base.retryAfter = d.retryDelay;
+            const match = String(d.retryDelay).match(/^(\d+(?:\.\d+)?)s?$/);
+            if (match) {
+              base.resetsAtMs = Date.now() + Math.round(parseFloat(match[1]) * 1000);
+            }
             break;
           }
         }
+      }
+      if (!base.resetsAtMs) {
+        base.resetsAtMs = Date.now() + 5 * 60 * 1000;
       }
     } catch {}
     return base;
