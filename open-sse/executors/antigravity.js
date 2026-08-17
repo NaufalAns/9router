@@ -432,7 +432,10 @@ export class AntigravityExecutor extends BaseExecutor {
     if (retryMs && retryMs > 0) {
       base.resetsAtMs = Date.now() + retryMs;
       base.retryAfter = Math.ceil(retryMs / 1000);
-    } else if (response.status === HTTP_STATUS.RATE_LIMITED || /quota|resource_exhausted|too many requests/i.test(errorMessage)) {
+    } else if (/INSUFFICIENT_G1_CREDITS_BALANCE/i.test(errorMessage)) {
+      // Credit balance exhaustion (e.g. Google One credit quota exhausted) -> lock until next cycle / background sync
+      base.resetsAtMs = Date.now() + 24 * 60 * 60 * 1000;
+    } else if (response.status === HTTP_STATUS.RATE_LIMITED || /quota|resource.*exhausted|too many requests/i.test(errorMessage)) {
       // Default rate limit cooldown (5 minutes) when upstream does not specify exact reset timestamp
       base.resetsAtMs = Date.now() + 5 * 60 * 1000;
     }

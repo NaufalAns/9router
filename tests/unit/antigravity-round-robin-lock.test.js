@@ -1,6 +1,18 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { isModelLockActive, buildModelLockUpdate } from "open-sse/services/accountFallback.js";
 import { AntigravityExecutor } from "open-sse/executors/antigravity.js";
+
+const { updatedDb } = vi.hoisted(() => ({
+  updatedDb: {}
+}));
+
+vi.mock("@/lib/localDb", () => ({
+  updateProviderConnection: vi.fn(async (id, data) => {
+    Object.assign(updatedDb, data);
+  }),
+  getProviderConnections: vi.fn(async () => []),
+  getProviderConnectionById: vi.fn(async () => null),
+}));
 
 describe("antigravity round-robin per-model quota skipping", () => {
   const ag = new AntigravityExecutor();
@@ -70,5 +82,48 @@ describe("antigravity round-robin per-model quota skipping", () => {
     expect(await ag.computeRetryDelay(res(429, "Your quota will reset after 2h7m23s"), 1)).toBe(false);
     expect(await ag.computeRetryDelay(res(429, "Quota exceeded for quota metric 'Queries'"), 1)).toBe(false);
     expect(await ag.computeRetryDelay(res(429, "Resource has been exhausted (e.g. check quota)."), 1)).toBe(false);
+    expect(await ag.computeRetryDelay(res(429, '{"code":429,"message":"Resource has been exhausted","details":[{"reason":"INSUFFICIENT_G1_CREDITS_BALANCE"}]}'), 1)).toBe(false);
+  });
+
+  it("syncUsageQuotaLocks writes multi-day resetAt locks into DB for exhausted models (0% remaining)", async () => {
+    const { syncUsageQuotaLocks } = await import("@/sse/services/quotaLockSync.js");
+
+    const usage = {
+      quotas: {
+        "gemini-3.7-flash-high": {
+          used: 1000,
+          total: 1000,
+          remainingPercentage: 0,
+          resetAt: "2026-08-22T22:13:00.000Z"
+        },
+        "gemini-3.6-flash-high": {
+          used: 1000,
+          total: 1000,
+          remainingPercentage: 0,
+          resetAt: "2026-08-22T22:13:00.000Z"
+        },
+        "claude-sonnet-4-6": {
+          used: 0,
+          total: 1000,
+          remainingPercentage: 100,
+          resetAt: "2026-08-24T12:00:00.000Z"
+        }
+      }
+    };
+
+    await syncUsageQuotaLocks("acc-cheat", usage);
+
+    // Gemini models locked until 2026-08-22T22:13:00.000Z (~5 days in future)
+    expect(updatedDb["modelLock_gemini-3.7-flash-high"]).toBe("2026-08-22T22:13:00.000Z");
+    expect(updatedDb["modelLock_gemini-3.6-flash-high"]).toBe("2026-08-22T22:13:00.000Z");
+
+    // Claude model has 100% quota -> modelLock is explicitly cleared (null)
+    expect(updatedDb["modelLock_claude-sonnet-4-6"]).toBe(null);
+
+    // Verify isModelLockActive behavior on the updated record
+    const record = { id: "acc-cheat", ...updatedDb };
+    expect(isModelLockActive(record, "gemini-3.7-flash-high")).toBe(true);
+    expect(isModelLockActive(record, "gemini-3.6-flash-high")).toBe(true);
+    expect(isModelLockActive(record, "claude-sonnet-4-6")).toBe(false);
   });
 });

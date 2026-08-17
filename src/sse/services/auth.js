@@ -260,6 +260,14 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
     console.error(`❌ ${provider} [${status}]: ${reason}`);
   }
 
+  // When Antigravity reports credit exhaustion (e.g. INSUFFICIENT_G1_CREDITS_BALANCE),
+  // trigger a background quota sync to lock all exhausted models on this account with exact reset dates.
+  if (provider === "antigravity" && String(errorText).includes("INSUFFICIENT_G1_CREDITS_BALANCE")) {
+    import("@/sse/services/quotaLockSync.js")
+      .then(({ syncConnectionQuotaLocks }) => syncConnectionQuotaLocks(conn || connectionId))
+      .catch(() => {});
+  }
+
   return { shouldFallback: true, cooldownMs };
 }
 

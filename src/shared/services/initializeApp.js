@@ -118,6 +118,11 @@ async function runHeavyStartup() {
   import("@/sse/services/backgroundTokenRefresh.js")
     .then(({ startBackgroundTokenRefresh }) => startBackgroundTokenRefresh())
     .catch((e) => console.log("[BackgroundTokenRefresh] scheduler start failed:", e.message));
+
+  // Sync quota availability locks for quota-supported providers (e.g. Antigravity, Gemini CLI)
+  import("@/sse/services/quotaLockSync.js")
+    .then(({ syncAllProviderQuotaLocks }) => syncAllProviderQuotaLocks())
+    .catch((e) => console.log("[QuotaLockSync] startup sync failed:", e.message));
 }
 
 function hasQuotaAutoPingEnabled(settings) {
