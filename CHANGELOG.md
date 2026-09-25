@@ -1,3 +1,9 @@
+# Unreleased
+
+## Fixes
+- **MITM / Antigravity DNS**: handle failed upstream lookups without crashing, bound and share connection attempts, rotate failing public IPs, verify upstream TLS certificates, and restore or clean DNS redirects across server restarts
+- **Proxy DNS bypass**: connect intercepted upstream hosts through the resolved public IP without looping through localhost; fail closed on DNS errors while preserving request streaming and TLS hostname verification
+
 # v0.5.86 (2026-09-23)
 
 ## Features

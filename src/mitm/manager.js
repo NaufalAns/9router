@@ -49,7 +49,16 @@ const MITM_RESTART_RESET_MS = 60000;
 
 let mitmRestartCount = 0;
 let mitmLastStartTime = 0;
+let mitmRestartResetStartTime = 0;
 let mitmIsRestarting = false;
+let mitmLifecycleGeneration = 0;
+let mitmLifecycleTask = Promise.resolve();
+
+function queueMitmLifecycle(task) {
+  const pending = mitmLifecycleTask.then(task);
+  mitmLifecycleTask = pending.catch(() => { });
+  return pending;
+}
 
 function resolveBundledServerPath() {
   if (process.env.MITM_SERVER_PATH) return process.env.MITM_SERVER_PATH;
@@ -246,7 +255,14 @@ async function loadDnsToolState() {
 /**
  * Re-apply DNS for tools previously enabled — called on app startup after MITM running.
  */
-async function restoreToolDNS(sudoPassword) {
+function restoreToolDNS(sudoPassword) {
+  return queueMitmLifecycle(async () => {
+    const status = await getMitmStatus();
+    return status.running ? restoreToolDNSInternal(sudoPassword) : { restored: [], failed: [] };
+  });
+}
+
+async function restoreToolDNSInternal(sudoPassword) {
   const state = await loadDnsToolState();
   const password = sudoPassword || getCachedPassword() || await loadEncryptedPassword();
   const result = { restored: [], failed: [] };
@@ -405,18 +421,34 @@ async function getMitmStatus() {
   return { running, pid, certExists, certTrusted, dnsStatus };
 }
 
+async function cleanupFailedMitmRecovery(generation, password) {
+  await queueMitmLifecycle(async () => {
+    if (generation !== mitmLifecycleGeneration || serverProcess || (serverPid && isProcessAlive(serverPid))) return;
+    try {
+      await removeAllDNSEntries(password || getCachedPassword() || await loadEncryptedPassword());
+    } catch (e) {
+      err(`Failed to clean DNS after MITM recovery: ${e.message}`);
+    }
+  });
+}
+
 async function scheduleMitmRestart(apiKey) {
   if (mitmIsRestarting) return;
   // Set guard synchronously before any await to prevent concurrent calls
   // from passing the check above.
   mitmIsRestarting = true;
+  const generation = mitmLifecycleGeneration;
 
   const aliveMs = Date.now() - mitmLastStartTime;
-  if (aliveMs >= MITM_RESTART_RESET_MS) mitmRestartCount = 0;
+  if (mitmLastStartTime && mitmLastStartTime !== mitmRestartResetStartTime) {
+    if (aliveMs >= MITM_RESTART_RESET_MS) mitmRestartCount = 0;
+    mitmRestartResetStartTime = mitmLastStartTime;
+  }
 
   if (mitmRestartCount >= MITM_MAX_RESTARTS) {
     err("Max restart attempts reached. Giving up.");
-    mitmIsRestarting = false;
+    await cleanupFailedMitmRecovery(generation);
+    if (generation === mitmLifecycleGeneration) mitmIsRestarting = false;
     return;
   }
 
@@ -426,29 +458,35 @@ async function scheduleMitmRestart(apiKey) {
 
   log(`Restarting in ${delay / 1000}s... (${mitmRestartCount}/${MITM_MAX_RESTARTS})`);
   await new Promise((r) => setTimeout(r, delay));
+  if (generation !== mitmLifecycleGeneration) return;
 
   try {
     const settings = _getSettings ? await _getSettings() : null;
+    if (generation !== mitmLifecycleGeneration) return;
     if (settings && !settings.mitmEnabled) {
       log("MITM disabled, skipping restart");
-      mitmIsRestarting = false;
+      await cleanupFailedMitmRecovery(generation);
+      if (generation === mitmLifecycleGeneration) mitmIsRestarting = false;
       return;
     }
     const password = getCachedPassword() || await loadEncryptedPassword();
+    if (generation !== mitmLifecycleGeneration) return;
     if (!password && !IS_WIN) {
       err("No cached password, cannot auto-restart");
-      mitmIsRestarting = false;
+      await cleanupFailedMitmRecovery(generation, password);
+      if (generation === mitmLifecycleGeneration) mitmIsRestarting = false;
       return;
     }
-    await startServer(apiKey, password);
+    await startServer(apiKey, password, false, generation);
+    if (generation !== mitmLifecycleGeneration) return;
     log("🔄 Restarted successfully");
-    mitmRestartCount = 0;
     mitmIsRestarting = false;
   } catch (e) {
+    if (generation !== mitmLifecycleGeneration) return;
     err(`Restart attempt ${mitmRestartCount}/${MITM_MAX_RESTARTS} failed: ${e.message}`);
     mitmIsRestarting = false;
-    // Schedule next retry
-    scheduleMitmRestart(apiKey);
+    // Schedule next retry; the counter resets only after a sustained healthy run.
+    void scheduleMitmRestart(apiKey);
   }
 }
 
@@ -474,7 +512,70 @@ async function killPort443Owner(owner, sudoPassword) {
   await new Promise(r => setTimeout(r, 800));
 }
 
-async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
+function startServer(apiKey, sudoPassword, forceKillPort443 = false, restartGeneration = null) {
+  if (restartGeneration === null) {
+    mitmLifecycleGeneration++;
+    mitmRestartCount = 0;
+    mitmIsRestarting = true;
+  }
+  const generation = mitmLifecycleGeneration;
+  return queueMitmLifecycle(async () => {
+    if (restartGeneration !== null && restartGeneration !== mitmLifecycleGeneration) return;
+    try {
+      return await startServerInternal(apiKey, sudoPassword, forceKillPort443);
+    } catch (e) {
+      if (restartGeneration === null && e.code !== "MITM_HEALTH_FAILED" && generation === mitmLifecycleGeneration &&
+          (!serverProcess || serverProcess.killed || serverProcess.exitCode !== null) &&
+          (!serverPid || !isProcessAlive(serverPid))) {
+        try {
+          await removeAllDNSEntries(sudoPassword || getCachedPassword() || await loadEncryptedPassword());
+        } catch (cleanupError) {
+          err(`Failed to clean DNS after MITM start: ${cleanupError.message}`);
+        }
+      }
+      throw e;
+    } finally {
+      if (restartGeneration === null && generation === mitmLifecycleGeneration) mitmIsRestarting = false;
+    }
+  });
+}
+
+async function reconcileToolDNS(sudoPassword) {
+  try {
+    const result = await restoreToolDNSInternal(sudoPassword);
+    if (result.failed.length) err(`DNS restore failed for: ${result.failed.map(({ tool }) => tool).join(", ")}`);
+  } catch (e) {
+    err(`DNS restore failed: ${e.message}`);
+  }
+}
+
+async function terminateFailedStart(child, sudoPassword) {
+  const waitForExit = (timeout) => new Promise((resolve) => {
+    if (child.exitCode != null || child.signalCode != null) return resolve(true);
+    const onExit = () => { clearTimeout(timer); resolve(true); };
+    const timer = setTimeout(() => { child.removeListener("exit", onExit); resolve(false); }, timeout);
+    child.once("exit", onExit);
+  });
+
+  const gracefulExit = waitForExit(1000);
+  try { child.kill(); } catch { /* force below if still alive */ }
+  if (await gracefulExit) return;
+
+  const forcedExit = waitForExit(1000);
+  killProcess(child.pid, true, sudoPassword);
+  try { child.kill("SIGKILL"); } catch { /* best effort */ }
+  if (!await forcedExit && isProcessAlive(child.pid)) {
+    err(`MITM child ${child.pid} did not exit after force-stop; removing DNS redirects anyway`);
+  }
+}
+
+async function startServerInternal(apiKey, sudoPassword, forceKillPort443) {
+  // A signal marks ChildProcess.killed immediately, before the OS has reaped it.
+  // Never reuse the PID of a child that failed its health check but is still alive.
+  if (serverProcess?.killed && serverProcess.exitCode == null && serverProcess.signalCode == null &&
+      isProcessAlive(serverProcess.pid)) {
+    throw new Error("Previous MITM child has not exited");
+  }
   if (!serverProcess || serverProcess.killed) {
     try {
       if (fs.existsSync(PID_FILE)) {
@@ -484,6 +585,9 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
           log(`♻️ Reusing existing process (PID: ${savedPid})`);
           await saveMitmSettings(true, sudoPassword);
           if (sudoPassword) setCachedPassword(sudoPassword);
+          await reconcileToolDNS(sudoPassword);
+          if (!isProcessAlive(savedPid)) throw new Error("MITM server exited during DNS restore");
+          mitmLastStartTime = Date.now();
           return { running: true, pid: savedPid };
         } else {
           fs.unlinkSync(PID_FILE);
@@ -660,7 +764,6 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
   if (serverProcess) {
     serverPid = serverProcess.pid;
     fs.writeFileSync(PID_FILE, String(serverPid));
-    mitmLastStartTime = Date.now();
   }
 
   // Set NODE_EXTRA_CA_CERTS so Node-based GUI apps (Electron/AG language_server) trust MITM cert
@@ -683,12 +786,14 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
   }
 
   let startError = null;
+  let startFailed = false;
   if (serverProcess) {
-    serverProcess.stdout.on("data", (data) => {
+    const child = serverProcess;
+    child.stdout.on("data", (data) => {
       // server.js already formats its own logs — print as-is
       process.stdout.write(data);
     });
-    serverProcess.stderr.on("data", (data) => {
+    child.stderr.on("data", (data) => {
       const msg = data.toString().trim();
       // Mac/Linux: filter sudo password prompt noise
       if (msg && (IS_WIN || (!msg.includes("Password:") && !msg.includes("password for")))) {
@@ -702,24 +807,35 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
         mitmIsRestarting = true; // prevent scheduleMitmRestart from firing
       }
     });
-    serverProcess.on("exit", (code) => {
+    child.on("exit", (code) => {
+      if (serverProcess !== child) return;
       log(`Server exited (code: ${code})`);
       serverProcess = null;
       serverPid = null;
       try { fs.unlinkSync(PID_FILE); } catch { /* ignore */ }
       try { fs.unlinkSync(LOCK_FILE); } catch { /* ignore */ }
-      // Auto-restart on unexpected exit
-      if (code !== 0 && !mitmIsRestarting) scheduleMitmRestart(apiKey);
+      // Even a clean exit is unexpected unless a stop is in progress.
+      if (!startFailed && !mitmIsRestarting) void scheduleMitmRestart(apiKey);
     });
   }
 
   const health = await pollMitmHealth(8000, MITM_PORT);
   if (!health) {
-    if (serverProcess && !serverProcess.killed) { try { serverProcess.kill(); } catch { /* ignore */ } serverProcess = null; }
+    startFailed = true;
+    if (serverProcess) await terminateFailedStart(serverProcess, sudoPassword);
+    // A failed health check means the redirect must not outlive the listener,
+    // even if the child cannot be reaped. Do not change saved DNS preferences.
+    try {
+      await removeAllDNSEntries(sudoPassword || getCachedPassword() || await loadEncryptedPassword());
+    } catch (e) {
+      err(`Failed to clean DNS after MITM health check: ${e.message}`);
+    }
     const processUsing443 = getProcessUsingPort443();
     const portInfo = processUsing443 ? ` Port 443 already in use by ${processUsing443}.` : "";
     const reason = startError || `Check sudo password or port 443 access.${portInfo}`;
-    throw new Error(`MITM server failed to start. ${reason}`);
+    const failure = new Error(`MITM server failed to start. ${reason}`);
+    failure.code = "MITM_HEALTH_FAILED";
+    throw failure;
   }
 
   if (_updateSettings) await _updateSettings({ mitmCertInstalled: true }).catch(() => { });
@@ -734,6 +850,9 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
 
   await saveMitmSettings(true, sudoPassword);
   if (sudoPassword) setCachedPassword(sudoPassword);
+  await reconcileToolDNS(sudoPassword);
+  if (!serverProcess || serverProcess.exitCode !== null) throw new Error("MITM server exited during DNS restore");
+  mitmLastStartTime = Date.now();
 
   // Server is healthy — remove lock file (PID file persists as the marker)
   try { fs.unlinkSync(LOCK_FILE); } catch { /* ignore */ }
@@ -749,10 +868,21 @@ async function startServer(apiKey, sudoPassword, forceKillPort443 = false) {
 /**
  * Stop MITM server — removes ALL tool DNS entries first, then kills server
  */
-async function stopServer(sudoPassword) {
-  // Prevent auto-restart from triggering on intentional stop
+function stopServer(sudoPassword) {
+  // Invalidate pending recovery before waiting for an in-flight start/cleanup.
+  const generation = ++mitmLifecycleGeneration;
   mitmIsRestarting = true;
   mitmRestartCount = 0;
+  return queueMitmLifecycle(async () => {
+    try {
+      return await stopServerInternal(sudoPassword);
+    } finally {
+      if (generation === mitmLifecycleGeneration) mitmIsRestarting = false;
+    }
+  });
+}
+
+async function stopServerInternal(sudoPassword) {
   log("⏹ Stopping server...");
 
   // Kill server process
@@ -818,7 +948,6 @@ async function stopServer(sudoPassword) {
   try { fs.unlinkSync(PID_FILE); } catch { /* ignore */ }
   try { fs.unlinkSync(LOCK_FILE); } catch { /* ignore */ }
   await saveMitmSettings(false, null);
-  mitmIsRestarting = false;
 
   return { running: false, pid: null };
 }
@@ -826,24 +955,28 @@ async function stopServer(sudoPassword) {
 /**
  * Enable DNS for a specific tool (requires server running)
  */
-async function enableToolDNS(tool, sudoPassword) {
-  const status = await getMitmStatus();
-  if (!status.running) throw new Error("MITM server is not running. Start the server first.");
+function enableToolDNS(tool, sudoPassword) {
+  return queueMitmLifecycle(async () => {
+    const status = await getMitmStatus();
+    if (!status.running) throw new Error("MITM server is not running. Start the server first.");
 
-  const password = sudoPassword || getCachedPassword() || await loadEncryptedPassword();
-  await addDNSEntry(tool, password);
-  await saveDnsToolState(tool, true);
-  return { success: true };
+    const password = sudoPassword || getCachedPassword() || await loadEncryptedPassword();
+    await addDNSEntry(tool, password);
+    await saveDnsToolState(tool, true);
+    return { success: true };
+  });
 }
 
 /**
  * Disable DNS for a specific tool
  */
-async function disableToolDNS(tool, sudoPassword) {
-  const password = sudoPassword || getCachedPassword() || await loadEncryptedPassword();
-  await removeDNSEntry(tool, password);
-  await saveDnsToolState(tool, false);
-  return { success: true };
+function disableToolDNS(tool, sudoPassword) {
+  return queueMitmLifecycle(async () => {
+    const password = sudoPassword || getCachedPassword() || await loadEncryptedPassword();
+    await removeDNSEntry(tool, password);
+    await saveDnsToolState(tool, false);
+    return { success: true };
+  });
 }
 
 /**
