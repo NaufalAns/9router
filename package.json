@@ -14,7 +14,8 @@
     "build:bun": "bun --bun next build --webpack",
     "start:bun": "bun ./.next/standalone/custom-server.js",
     "cli:pack": "npm --prefix cli run pack:cli",
-    "cli:publish": "npm --prefix cli run publish:cli"
+    "cli:publish": "npm --prefix cli run publish:cli",
+    "update": "node -e \"try{process.platform==='win32'?require('child_process').execSync('taskkill /F /IM 9router.exe 2>nul & powershell -NoP -C \\\"Get-Process node -EA 0 | ? { $_.CommandLine -match \\'cli.js|next-server\\' } | Stop-Process -F\\\" 2>nul'):require('child_process').execSync('pkill -f \\\"(cli\\\\.js|next-server|mitm/server)\\\" 2>/dev/null || true')}catch(e){}\" && git reset --hard HEAD && git clean -fd && git checkout feat/windows-mitm-autostart && git pull origin feat/windows-mitm-autostart && npm install && cd cli && npm install && npm run build && npm link && 9router"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
