@@ -193,7 +193,13 @@ function buildCliPackage() {
   // Step 2: Clean old app/cli/app if exists
   console.log("2️⃣  Cleaning old app/cli/app...");
   if (fs.existsSync(cliAppDir)) {
-    fs.rmSync(cliAppDir, { recursive: true, force: true });
+    try {
+      fs.rmSync(cliAppDir, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+    } catch {
+      for (const entry of fs.readdirSync(cliAppDir)) {
+        fs.rmSync(path.join(cliAppDir, entry), { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+      }
+    }
   }
   console.log("✅ Cleaned\n");
 
