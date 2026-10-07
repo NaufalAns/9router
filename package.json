@@ -15,7 +15,7 @@
     "start:bun": "bun ./.next/standalone/custom-server.js",
     "cli:pack": "npm --prefix cli run pack:cli",
     "cli:publish": "npm --prefix cli run publish:cli",
-    "update": "node scripts/kill-processes.mjs && git reset --hard HEAD && git clean -fd && git checkout feat/windows-mitm-autostart && git pull origin feat/windows-mitm-autostart && npm install && cd cli && npm install && npm run build && npm link"
+    "update": "node scripts/kill-processes.mjs && git reset --hard HEAD && git clean -fd && git checkout feat/windows-mitm-autostart && git pull origin feat/windows-mitm-autostart && npm install && cd cli && npm install && npm run build && npm link --force"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
