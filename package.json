@@ -15,7 +15,8 @@
     "start:bun": "bun ./.next/standalone/custom-server.js",
     "cli:pack": "npm --prefix cli run pack:cli",
     "cli:publish": "npm --prefix cli run publish:cli",
-    "update": "node -e \"await Promise.allSettled(['http://localhost:20128','http://localhost:20127'].map(b=>fetch(b+'/api/version/shutdown',{method:'POST'}))).catch(()=>{});await new Promise(r=>setTimeout(r,800));\" && git reset --hard HEAD && git clean -fd && git checkout feat/windows-mitm-autostart && git pull origin feat/windows-mitm-autostart && npm install && cd cli && npm install && npm run build && npm link --force"
+    "shutdown": "node scripts/shutdown.mjs",
+    "update": "npm run shutdown && git reset --hard HEAD && git clean -fd && git checkout feat/windows-mitm-autostart && git pull origin feat/windows-mitm-autostart && npm install && cd cli && npm install && npm run build && npm link --force"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",
