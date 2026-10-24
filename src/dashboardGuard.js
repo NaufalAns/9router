@@ -216,6 +216,9 @@ export async function proxy(request) {
 
   // Always protected - require valid JWT or local CLI token (machineId-based)
   if (ALWAYS_PROTECTED.some((p) => pathname.startsWith(p))) {
+    if (pathname === "/api/version/shutdown" && isLocalRequest(request)) {
+      return NextResponse.next();
+    }
     if (await hasValidCliToken(request) || await hasValidToken(request))
       return NextResponse.next();
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });

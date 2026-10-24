@@ -69,6 +69,7 @@ $script:notifyIcon.Visible = $true
 $script:menu = New-Object System.Windows.Forms.ContextMenuStrip
 $script:notifyIcon.ContextMenuStrip = $script:menu
 $script:items = @()
+$script:menu.Add_Opening({ Write-Event @{ type = "menu-open" } })
 
 function Write-Event($obj) {
   $json = $obj | ConvertTo-Json -Compress
