@@ -1084,6 +1084,41 @@ export default function ProviderDetailPage() {
                 }}
                 onDelete={() => handleDelete(conn.id)}
                 oneByOneStatus={oneByOneResults[conn.id] || null}
+                onRemoveUnsupportedModel={async (connId, modelToRemove) => {
+                  const targetConn = connections.find(c => c.id === connId);
+                  if (!targetConn) return;
+                  const updated = (targetConn.unsupportedModels || []).filter(m => m !== modelToRemove);
+                  try {
+                    const res = await fetch(`/api/providers/${connId}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ unsupportedModels: updated }),
+                    });
+                    if (res.ok) {
+                      setConnections(prev => prev.map(c =>
+                        c.id === connId ? { ...c, unsupportedModels: updated } : c
+                      ));
+                    }
+                  } catch (err) {
+                    console.error("Failed to remove unsupported model:", err);
+                  }
+                }}
+                onResetUnsupportedModels={async (connId) => {
+                  try {
+                    const res = await fetch(`/api/providers/${connId}`, {
+                      method: "PUT",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ unsupportedModels: [] }),
+                    });
+                    if (res.ok) {
+                      setConnections(prev => prev.map(c =>
+                        c.id === connId ? { ...c, unsupportedModels: [] } : c
+                      ));
+                    }
+                  } catch (err) {
+                    console.error("Failed to reset unsupported models:", err);
+                  }
+                }}
               />
             </div>
           </div>

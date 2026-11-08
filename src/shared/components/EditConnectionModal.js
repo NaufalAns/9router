@@ -37,6 +37,7 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         name: connection.name || "",
         priority: connection.priority || 1,
         apiKey: "",
+        unsupportedModels: Array.isArray(connection.unsupportedModels) ? connection.unsupportedModels : [],
       });
       // Load Azure-specific data if present
       if (connection.provider === "azure" && connection.providerSpecificData) {
@@ -144,6 +145,9 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
         name: formData.name,
         priority: formData.priority,
       };
+      if (formData.unsupportedModels !== undefined) {
+        updates.unsupportedModels = formData.unsupportedModels;
+      }
       if (!isOAuth && formData.apiKey) {
         updates.apiKey = formData.apiKey;
         let isValid = validationResult === "success";
@@ -228,6 +232,43 @@ export default function EditConnectionModal({ isOpen, connection, proxyPools, on
           value={formData.priority}
           onChange={(e) => setFormData({ ...formData, priority: Number.parseInt(e.target.value, 10) || 1 })}
         />
+
+        {Array.isArray(formData.unsupportedModels) && formData.unsupportedModels.length > 0 && (
+          <div className="bg-sidebar/50 p-3 rounded-lg border border-amber-500/20">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-sm font-medium text-amber-600 dark:text-amber-400">Unsupported Models</span>
+              <Button
+                size="xs"
+                variant="ghost"
+                onClick={() => setFormData({ ...formData, unsupportedModels: [] })}
+                className="text-xs text-text-muted hover:text-red-500"
+              >
+                Clear all
+              </Button>
+            </div>
+            <div className="flex flex-wrap gap-1">
+              {formData.unsupportedModels.map((m) => (
+                <span
+                  key={m}
+                  className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-2 py-0.5 text-xs font-mono text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                >
+                  {m}
+                  <button
+                    type="button"
+                    onClick={() => setFormData({
+                      ...formData,
+                      unsupportedModels: formData.unsupportedModels.filter((x) => x !== m)
+                    })}
+                    className="ml-1 text-amber-500 hover:text-red-500 transition-colors font-bold"
+                    title={`Remove ${m}`}
+                  >
+                    ×
+                  </button>
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
 
         {!isOAuth && (
           <>
@@ -379,6 +420,7 @@ EditConnectionModal.propTypes = {
     authType: PropTypes.string,
     provider: PropTypes.string,
     providerSpecificData: PropTypes.object,
+    unsupportedModels: PropTypes.arrayOf(PropTypes.string),
   }),
   proxyPools: PropTypes.arrayOf(PropTypes.shape({
     id: PropTypes.string,

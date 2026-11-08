@@ -280,7 +280,12 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, { requestedModel: requestedModel || model });
 
     // All accounts unavailable
-    if (!credentials || credentials.allRateLimited) {
+    if (!credentials || credentials.allRateLimited || credentials.allUnsupported) {
+      if (credentials?.allUnsupported) {
+        const errorMsg = credentials.lastError || `Model ${model} is not supported by any account for ${provider}`;
+        log.warn("CHAT", `[${provider}/${model}] ${errorMsg}`);
+        return errorResponse(HTTP_STATUS.BAD_REQUEST, `[${provider}/${model}] ${errorMsg}`, lastHeaders);
+      }
       if (credentials?.allRateLimited) {
         const errorMsg = lastError || credentials.lastError || "Unavailable";
         const status = HTTP_STATUS.SERVICE_UNAVAILABLE;

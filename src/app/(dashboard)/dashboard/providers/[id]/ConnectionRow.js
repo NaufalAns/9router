@@ -7,7 +7,7 @@ import PropTypes from "prop-types";
 import { Badge, Toggle, Tooltip } from "@/shared/components";
 import CooldownTimer from "./CooldownTimer";
 
-export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null }) {
+export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst, isLast, onMoveUp, onMoveDown, onToggleActive, onUpdateProxy, onEdit, onDelete, oneByOneStatus = null, autoPing = null , onRemoveUnsupportedModel = null, onResetUnsupportedModels = null }) {
   const [showProxyDropdown, setShowProxyDropdown] = useState(false);
   const [updatingProxy, setUpdatingProxy] = useState(false);
   const proxyDropdownRef = useRef(null);
@@ -232,12 +232,54 @@ export default function ConnectionRow({ connection, proxyPools, isOAuth, isFirst
             {connection.globalPriority && (
               <span className="text-xs text-text-muted">Auto: {connection.globalPriority}</span>
             )}
-            {getOneByOneLabel() && (
+                        {getOneByOneLabel() && (
               <Badge variant={getOneByOneVariant()} size="sm">
                 {getOneByOneLabel()}
               </Badge>
             )}
           </div>
+          {Array.isArray(connection.unsupportedModels) && connection.unsupportedModels.length > 0 && (
+            <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+              <span className="text-[11px] font-medium text-amber-500 inline-flex items-center gap-0.5">
+                <span className="material-symbols-outlined text-[13px]">block</span>
+                Unsupported:
+              </span>
+              {connection.unsupportedModels.map((m) => (
+                <span
+                  key={m}
+                  className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-mono text-amber-600 dark:text-amber-400 border border-amber-500/20"
+                >
+                  {m}
+                  {onRemoveUnsupportedModel && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRemoveUnsupportedModel(connection.id, m);
+                      }}
+                      className="ml-0.5 text-amber-500 hover:text-red-500 transition-colors font-bold"
+                      title={`Remove ${m} from unsupported list`}
+                    >
+                      ×
+                    </button>
+                  )}
+                </span>
+              ))}
+              {onResetUnsupportedModels && connection.unsupportedModels.length > 1 && (
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onResetUnsupportedModels(connection.id);
+                  }}
+                  className="text-[10px] text-text-muted hover:text-primary underline ml-1"
+                  title="Clear all unsupported models"
+                >
+                  Reset all
+                </button>
+              )}
+            </div>
+          )}
           {hasAnyProxy && (
             <div className="mt-1 flex items-center gap-2 flex-wrap">
               <span className="max-w-full truncate text-[11px] text-text-muted sm:max-w-[420px]" title={proxyDisplayText}>
@@ -371,4 +413,6 @@ ConnectionRow.propTypes = {
     scheduleSummary: PropTypes.string,
     onConfigure: PropTypes.func,
   }),
+  onRemoveUnsupportedModel: PropTypes.func,
+  onResetUnsupportedModels: PropTypes.func,
 };

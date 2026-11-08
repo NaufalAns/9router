@@ -92,7 +92,8 @@ export async function PUT(request, { params }) {
       testStatus,
       lastError,
       lastErrorAt,
-      providerSpecificData
+      providerSpecificData,
+      unsupportedModels
     } = body;
 
     const existing = await getProviderConnectionById(id);
@@ -120,6 +121,7 @@ export async function PUT(request, { params }) {
     if (testStatus !== undefined) updateData.testStatus = testStatus;
     if (lastError !== undefined) updateData.lastError = lastError;
     if (lastErrorAt !== undefined) updateData.lastErrorAt = lastErrorAt;
+    if (unsupportedModels !== undefined) updateData.unsupportedModels = Array.isArray(unsupportedModels) ? unsupportedModels : [];
 
     if (
       shouldMergeProviderSpecificData(
