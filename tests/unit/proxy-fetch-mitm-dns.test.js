@@ -31,7 +31,7 @@ describe("intercepted-host DNS bypass", () => {
     cancel = vi.fn();
     systemLookup = vi.fn((hostname, _options, callback) => callback(null, "127.0.0.1", 4));
     fetchBehavior = async (url, options) => {
-      if (options?.dispatcher?.connect) await dispatcherLookup(options.dispatcher, new URL(url instanceof Request ? url.url : url).hostname);
+      if (options?.dispatcher?.connect?.lookup) await dispatcherLookup(options.dispatcher, new URL(url instanceof Request ? url.url : url).hostname);
       return new Response(new ReadableStream({
         start(controller) {
           controller.enqueue(new TextEncoder().encode("first"));
@@ -60,7 +60,7 @@ describe("intercepted-host DNS bypass", () => {
         constructor(options) { this.uri = options.uri; }
       },
     }));
-    ({ proxyAwareFetch } = await import("open-sse/utils/proxyFetch.js"));
+    ({ proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js"));
   });
 
   afterEach(() => {
@@ -207,7 +207,7 @@ describe("intercepted-host DNS bypass", () => {
 
   it("keeps direct fallback for unrelated hosts after proxy failure", async () => {
     fetchBehavior = async (_url, options) => {
-      if (options?.dispatcher) throw new Error("proxy down");
+      if (options?.dispatcher?.uri) throw new Error("proxy down");
       return new Response("direct");
     };
     expect(await (await proxyAwareFetch("https://unrelated.test/", {}, {
@@ -215,14 +215,14 @@ describe("intercepted-host DNS bypass", () => {
     })).text()).toBe("direct");
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(fetchMock.mock.calls[0][1].dispatcher.uri).toBe("http://proxy.test:8080");
-    expect(fetchMock.mock.calls[1][1]).toEqual({});
+    expect(fetchMock.mock.calls[1][1].dispatcher.connect).toBeDefined();
     expect(resolve4).not.toHaveBeenCalled();
   });
 
   it("does not classify attacker-controlled suffixes as intercepted hosts", async () => {
     const url = "https://cloudcode-pa.googleapis.com.attacker.test/";
     await proxyAwareFetch(url);
-    expect(fetchMock.mock.calls[0][1]).toEqual({});
+    expect(fetchMock.mock.calls[0][1].dispatcher.connect).toBeDefined();
     expect(resolve4).not.toHaveBeenCalled();
   });
 

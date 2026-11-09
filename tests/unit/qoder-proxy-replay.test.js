@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { ProxyAgent } from "undici";
 
 vi.mock("../../open-sse/services/qoderModels.js", () => ({
   getQoderModelConfig: vi.fn(async () => ({ key: "auto", max_output_tokens: 32 })),
@@ -81,7 +82,7 @@ describe("Qoder signed inference transport", () => {
     expect(result.response.ok).toBe(true);
     await result.response.text();
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(!!fetchMock.mock.calls[0][1].dispatcher).toBe(useProxy);
+    expect(fetchMock.mock.calls[0][1].dispatcher instanceof ProxyAgent).toBe(useProxy);
   });
 
   it("preserves caller cancellation without replaying the request", async () => {
