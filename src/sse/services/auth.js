@@ -19,6 +19,27 @@ function githubMonthlyResetMs(status, errorText, provider) {
 }
 
 /**
+ * Check if upstream error indicates that a model is not supported by the account
+ */
+export function isUnsupportedModelError(provider, status, errorText) {
+  const providerId = resolveProviderId(provider);
+  const text = typeof errorText === "string" ? errorText : JSON.stringify(errorText || "");
+
+  if (providerId === "antigravity" || providerId === "gemini-cli") {
+    // 1. Thinking level error (e.g. "Thinking level MINIMAL is not supported for this model.")
+    if (/thinking\s+level\s+.*is\s+not\s+supported/i.test(text)) return true;
+    // 2. Explicit model not supported wording
+    if (/not\s+supported\s+for\s+this\s+model/i.test(text)) return true;
+    if (/model\s+(is\s+)?not\s+supported/i.test(text)) return true;
+    if (/is\s+not\s+supported\s+by\s+this\s+model/i.test(text)) return true;
+    // 3. Status 400 with INVALID_ARGUMENT about unsupported model/feature
+    if (status === 400 && /unsupported/i.test(text) && /model/i.test(text)) return true;
+  }
+  return false;
+}
+
+
+/**
  * Get provider credentials from localDb
  * Filters out unavailable accounts and returns the selected account based on strategy
  * @param {string} provider - Provider name
@@ -83,10 +104,23 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const isAntigravity = providerId === "antigravity";
     const antigravityQuotaCache = isAntigravity && model ? getAntigravityQuotaCache() : null;
 
-    // Filter out model-locked, excluded, and Antigravity quota-exhausted connections.
+    const cleanModel = typeof model === "string" ? model.replace(/\([^()]+\)\s*$/, "").trim() : model;
+
+
+
+    // Filter out model-locked, excluded, unsupported, and Antigravity quota-exhausted connections.
+
+
     const availableConnections = connections.filter(c => {
+
+
       if (excludeSet.has(c.id)) return false;
       if (isModelLockActive(c, model)) return false;
+      if (cleanModel && Array.isArray(c.unsupportedModels)) {
+        if (c.unsupportedModels.includes(cleanModel) || (model && c.unsupportedModels.includes(model))) {
+          return false;
+        }
+      }
       const enabled = c.providerSpecificData?.enabledModels;
       if (providerId === "codex" && Array.isArray(enabled) && enabled.length && requestedModel && !enabled.includes(requestedModel)) return false;
       // Antigravity: skip if live quota exhausted for this model
@@ -106,13 +140,42 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     connections.forEach(c => {
       const excluded = excludeSet.has(c.id);
       const locked = isModelLockActive(c, model);
-      if (excluded || locked) {
+      const unsupported = cleanModel && Array.isArray(c.unsupportedModels) && (c.unsupportedModels.includes(cleanModel) || (model && c.unsupportedModels.includes(model)));
+      if (excluded || locked || unsupported) {
         const lockUntil = getEarliestModelLockUntil(c);
-        log.debug("AUTH", `  → ${c.id?.slice(0, 8)} | ${excluded ? "excluded" : ""} ${locked ? `modelLocked(${model}) until ${lockUntil}` : ""}`);
+        const lockStr = locked ? ("modelLocked(" + model + ") until " + lockUntil) : "";
+        const unsupStr = unsupported ? ("unsupportedModel(" + cleanModel + ")") : "";
+        log.debug("AUTH", `  -> ${c.id?.slice(0, 8)} | ${excluded ? "excluded" : ""} ${lockStr} ${unsupStr}`);
       }
     });
 
     if (availableConnections.length === 0) {
+      if (cleanModel) {
+
+        const unsupportedConns = connections.filter(c =>
+
+          Array.isArray(c.unsupportedModels) && (c.unsupportedModels.includes(cleanModel) || (model && c.unsupportedModels.includes(model)))
+
+        );
+
+        if (unsupportedConns.length > 0 && unsupportedConns.length === connections.length) {
+
+          log.warn("AUTH", `${provider} | all ${connections.length} accounts do not support model ${cleanModel}`);
+
+          return {
+
+            allUnsupported: true,
+
+            lastError: `Model ${cleanModel} is not supported by any connected account for ${provider}`,
+
+            lastErrorCode: 400
+
+          };
+
+        }
+
+      }
+
       // Find earliest persistent lock or lazy Antigravity quota-cache reset for retry timing.
       const lockedConns = connections.filter(c => isModelLockActive(c, model));
       const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
@@ -250,6 +313,27 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
   const conn = connections.find(c => c.id === connectionId);
   const backoffLevel = conn?.backoffLevel || 0;
 
+  // When an account does not support a model (e.g. Antigravity thinking level / model restrictions),
+  // record it permanently in unsupportedModels and trigger fallback to the next account.
+  if (model && isUnsupportedModelError(provider, status, errorText)) {
+    const cleanModel = typeof model === "string" ? model.replace(/\([^()]+\)\s*$/, "").trim() : model;
+    if (cleanModel) {
+      const existingUnsupported = Array.isArray(conn?.unsupportedModels) ? [...conn.unsupportedModels] : [];
+      if (!existingUnsupported.includes(cleanModel)) {
+        existingUnsupported.push(cleanModel);
+        await updateProviderConnection(connectionId, {
+          unsupportedModels: existingUnsupported,
+          lastError: typeof errorText === "string" ? errorText.slice(0, 200) : "Model not supported",
+          errorCode: status,
+          lastErrorAt: new Date().toISOString(),
+        });
+        const connName = conn?.displayName || conn?.name || conn?.email || connectionId.slice(0, 8);
+        log.warn("AUTH", `${connName} added ${cleanModel} to unsupportedModels [${status}]`);
+      }
+      return { shouldFallback: true, cooldownMs: 0 };
+    }
+  }
+
   // GitHub premium-request exhaustion is account-wide until the next UTC month.
   const githubResetAtMs = githubMonthlyResetMs(status, errorText, provider);
 
@@ -289,6 +373,14 @@ export async function markAccountUnavailable(connectionId, status, errorText, pr
 
   if (provider && status && reason) {
     console.error(`❌ ${provider} [${status}]: ${reason}`);
+  }
+
+  // When Antigravity reports credit exhaustion (e.g. INSUFFICIENT_G1_CREDITS_BALANCE),
+  // trigger a background quota sync to lock all exhausted models on this account with exact reset dates.
+  if (provider === "antigravity" && String(errorText).includes("INSUFFICIENT_G1_CREDITS_BALANCE")) {
+    import("@/sse/services/quotaLockSync.js")
+      .then(({ syncConnectionQuotaLocks }) => syncConnectionQuotaLocks(conn || connectionId))
+      .catch(() => {});
   }
 
   return { shouldFallback: true, cooldownMs };

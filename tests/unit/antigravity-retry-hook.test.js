@@ -47,6 +47,43 @@ describe("antigravity computeRetryDelay hook (D3)", () => {
     expect(await ag.computeRetryDelay(r, 2)).toBe(4000);
   });
 
+  it("vetoes (false) when error message contains quota exhaustion to avoid hanging on limited account", async () => {
+    const r1 = res(429, {}, { error: { message: "Quota exceeded for quota metric 'Queries' of service 'daily-cloudcode-pa.googleapis.com'" } });
+    expect(await ag.computeRetryDelay(r1, 1)).toBe(false);
+
+    const r2 = res(429, {}, { error: { message: "Resource has been exhausted (e.g. check quota)." } });
+    expect(await ag.computeRetryDelay(r2, 1)).toBe(false);
+  });
+
+  it("parseError extracts precise resetsAtMs from reset after string with spaces", () => {
+    const now = Date.now();
+    const r = res(429, {}, { error: { message: "Your quota will reset after 2h 7m 23s" } });
+    const parsed = ag.parseError(r, JSON.stringify({ error: { message: "Your quota will reset after 2h 7m 23s" } }));
+    const expectedMs = (2 * 3600 + 7 * 60 + 23) * 1000;
+    expect(parsed.resetsAtMs).toBeGreaterThanOrEqual(now + expectedMs - 1000);
+    expect(parsed.resetsAtMs).toBeLessThanOrEqual(now + expectedMs + 2000);
+  });
+
+  it("parseError extracts precise resetsAtMs from Google RPC RetryInfo", () => {
+    const now = Date.now();
+    const body = {
+      error: {
+        code: 429,
+        message: "Resource exhausted",
+        details: [
+          {
+            "@type": "type.googleapis.com/google.rpc.RetryInfo",
+            retryDelay: "120s"
+          }
+        ]
+      }
+    };
+    const r = res(429, {}, body);
+    const parsed = ag.parseError(r, JSON.stringify(body));
+    expect(parsed.resetsAtMs).toBeGreaterThanOrEqual(now + 120000 - 1000);
+    expect(parsed.resetsAtMs).toBeLessThanOrEqual(now + 120000 + 2000);
+  });
+
   it("does not retry non-transient 400 errors", async () => {
     const r = res(400, {}, { error: { message: "Invalid request" } });
     expect(await ag.computeRetryDelay(r, 1)).toBe(false);
