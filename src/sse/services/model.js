@@ -1,5 +1,5 @@
 // Re-export from open-sse with localDb integration
-import { getModelAliases, getComboByName, getProviderNodes, getProviderConnections, getAccountComboByName } from "@/lib/localDb";
+import * as localDb from "@/lib/localDb";
 import { parseModel as parseModelCore, resolveModelAliasFromMap, getModelInfoCore } from "open-sse/services/model.js";
 import REGISTRY from "open-sse/providers/registry/index.js";
 
@@ -28,7 +28,7 @@ export function parseModel(modelStr) {
  * Resolve model alias from localDb
  */
 export async function resolveModelAlias(alias) {
-  const aliases = await getModelAliases();
+  const aliases = await localDb.getModelAliases();
   return resolveModelAliasFromMap(alias, aliases);
 }
 
@@ -42,19 +42,19 @@ export async function getModelInfo(modelStr) {
     // Provider-node prefixes are user-defined. They must not override built-in
     // provider ids/aliases such as `cf`, `cloudflare-ai`, `openai`, or `hf`.
     if (!RESERVED_PROVIDER_PREFIXES.has(parsed.providerAlias)) {
-      const openaiNodes = await getProviderNodes({ type: "openai-compatible" });
+      const openaiNodes = await localDb.getProviderNodes({ type: "openai-compatible" });
       const matchedOpenAI = openaiNodes.find((node) => node.prefix === parsed.providerAlias);
       if (matchedOpenAI) {
         return { provider: matchedOpenAI.id, model: parsed.model };
       }
 
-      const anthropicNodes = await getProviderNodes({ type: "anthropic-compatible" });
+      const anthropicNodes = await localDb.getProviderNodes({ type: "anthropic-compatible" });
       const matchedAnthropic = anthropicNodes.find((node) => node.prefix === parsed.providerAlias);
       if (matchedAnthropic) {
         return { provider: matchedAnthropic.id, model: parsed.model };
       }
 
-      const embeddingNodes = await getProviderNodes({ type: "custom-embedding" });
+      const embeddingNodes = await localDb.getProviderNodes({ type: "custom-embedding" });
       const matchedEmbedding = embeddingNodes.find((node) => node.prefix === parsed.providerAlias);
       if (matchedEmbedding) {
         return { provider: matchedEmbedding.id, model: parsed.model };
@@ -68,7 +68,7 @@ export async function getModelInfo(modelStr) {
 
   // Check if this is a combo name before resolving as alias
   // This prevents combo names from being incorrectly routed to providers
-  const combo = await getComboByName(parsed.model);
+  const combo = await localDb.getComboByName(parsed.model);
   if (combo) {
     // Return null provider to signal this should be handled as combo
     // The caller (handleChat) will detect this and handle it as combo
@@ -76,9 +76,10 @@ export async function getModelInfo(modelStr) {
   }
 
   // Check if this is an account combo name
-  if (typeof getAccountComboByName === "function") {
-    try {
-      const ac = await getAccountComboByName(parsed.model);
+  try {
+    const fn = localDb.getAccountComboByName;
+    if (typeof fn === "function") {
+      const ac = await fn(parsed.model);
       if (ac && ac.isActive !== false) {
         const targetParsed = parseModel(ac.model);
         return {
@@ -87,12 +88,34 @@ export async function getModelInfo(modelStr) {
           accountCombo: ac,
         };
       }
-    } catch {
-      // ignore
     }
+  } catch {
+    // ignore
   }
 
-  return fallbackToClaudeOAuth(await getModelInfoCore(modelStr, getModelAliases));
+  const aliasResolved = await resolveModelAlias(parsed.model);
+  if (aliasResolved) {
+    return fallbackToOAuthProvider(aliasResolved);
+  }
+
+  try {
+    const fn = localDb.getAccountComboByModel;
+    if (typeof fn === "function") {
+      const ac = await fn(parsed.model);
+      if (ac && ac.isActive !== false) {
+        const targetParsed = parseModel(ac.model);
+        return {
+          provider: ac.provider || targetParsed.provider,
+          model: targetParsed.model,
+          accountCombo: ac,
+        };
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  return fallbackToOAuthProvider(await getModelInfoCore(modelStr, localDb.getModelAliases));
 }
 
 /**
@@ -103,22 +126,40 @@ export async function getComboModels(modelStr) {
   // Only check if it's not in provider/model format
   if (modelStr.includes("/")) return null;
 
-  const combo = await getComboByName(modelStr);
+  const combo = await localDb.getComboByName(modelStr);
   if (combo && combo.models && combo.models.length > 0) {
     return combo.models;
   }
   return null;
 }
 
-// A bare `claude-*` id infers provider "anthropic" (API key). When no anthropic
-// connection is active but a Claude OAuth connection is, use "claude" instead of
-// failing with "No active credentials for provider: anthropic" (same idea as the
-// Codex-only gpt-* rules in open-sse/services/model.js).
-async function fallbackToClaudeOAuth(info) {
-  if (info?.provider !== "anthropic") return info;
+// Bare `claude-*` / `gemini-*` ids infer API-key providers ("anthropic" / "gemini").
+// When no API-key connection is active, fall back to active OAuth providers
+// ("claude" or "antigravity" / "gemini-cli") instead of failing with
+// "No active credentials for provider".
+async function fallbackToOAuthProvider(info) {
+  if (!info?.provider) return info;
   const hasActive = async (provider) =>
-    (await getProviderConnections({ provider, isActive: true })).length > 0;
-  if (await hasActive("anthropic")) return info;
-  if (!(await hasActive("claude"))) return info;
-  return { ...info, provider: "claude" };
+    ((await localDb.getProviderConnections({ provider, isActive: true })) || []).length > 0;
+
+  if (info.provider === "anthropic") {
+    if (await hasActive("anthropic")) return info;
+    if (!(await hasActive("claude"))) return info;
+    return { ...info, provider: "claude" };
+  }
+
+  if (info.provider === "gemini") {
+    if (await hasActive("gemini")) return info;
+    const isAntigravityOnly = /(?:^|[-/])gemini-(?:4|3\.[678])/i.test(info.model || "");
+    if (isAntigravityOnly && (await hasActive("antigravity"))) {
+      return { ...info, provider: "antigravity" };
+    }
+    if (!isAntigravityOnly && (await hasActive("gemini-cli"))) {
+      return { ...info, provider: "gemini-cli" };
+    }
+    if (await hasActive("antigravity")) return { ...info, provider: "antigravity" };
+    if (await hasActive("gemini-cli")) return { ...info, provider: "gemini-cli" };
+  }
+
+  return info;
 }

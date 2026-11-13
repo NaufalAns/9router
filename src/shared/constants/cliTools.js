@@ -8,8 +8,12 @@ export const MITM_TOOLS = {
     description: "Google Antigravity IDE with MITM",
     configType: "mitm",
     mitmDomain: "daily-cloudcode-pa.googleapis.com",
-    modelAliases: ["gemini-4-carbon-high", "gemini-4-carbon-medium", "gemini-4-carbon-low", "gemini-4-carbon", "gemini-4-argon-high", "gemini-4-argon-medium", "gemini-4-argon-low", "gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low", "gemini-3.7-flash-high", "gemini-3.7-flash-medium", "gemini-3.7-flash-low", "gemini-3.6-flash-high", "gemini-3.6-flash-medium", "gemini-3.6-flash-low", "gemini-3.1-pro-high", "gemini-3.1-pro-low", "gemini-pro-agent", "claude-sonnet-5-5", "claude-sonnet-5-5-low", "claude-sonnet-5-5-medium", "claude-sonnet-5-5-high", "claude-opus-5-5", "claude-opus-5-5-low", "claude-opus-5-5-medium", "claude-opus-5-5-high", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"],
+    modelAliases: ["gemini-4-hydrogen-high", "gemini-4-hydrogen-medium", "gemini-4-hydrogen-low", "gemini-4-hydrogen", "gemini-4-carbon-high", "gemini-4-carbon-medium", "gemini-4-carbon-low", "gemini-4-carbon", "gemini-4-argon-high", "gemini-4-argon-medium", "gemini-4-argon-low", "gemini-3.8-flash-high", "gemini-3.8-flash-medium", "gemini-3.8-flash-low", "gemini-3.7-flash-high", "gemini-3.7-flash-medium", "gemini-3.7-flash-low", "gemini-3.6-flash-high", "gemini-3.6-flash-medium", "gemini-3.6-flash-low", "gemini-3.1-pro-high", "gemini-3.1-pro-low", "gemini-pro-agent", "claude-sonnet-5-5", "claude-sonnet-5-5-low", "claude-sonnet-5-5-medium", "claude-sonnet-5-5-high", "claude-opus-5-5", "claude-opus-5-5-low", "claude-opus-5-5-medium", "claude-opus-5-5-high", "claude-sonnet-4-6", "claude-opus-4-6-thinking", "gpt-oss-120b-medium"],
     defaultModels: [
+      { id: "gemini-4-hydrogen-high", name: "Gemini 4 Hydrogen (High)", alias: "gemini-4-hydrogen-high" },
+      { id: "gemini-4-hydrogen-medium", name: "Gemini 4 Hydrogen (Medium)", alias: "gemini-4-hydrogen-medium" },
+      { id: "gemini-4-hydrogen-low", name: "Gemini 4 Hydrogen (Low)", alias: "gemini-4-hydrogen-low" },
+      { id: "gemini-4-hydrogen", name: "Gemini 4 Hydrogen", alias: "gemini-4-hydrogen" },
       { id: "gemini-4-carbon-high", name: "Gemini 4 Carbon (High)", alias: "gemini-4-carbon-high" },
       { id: "gemini-4-carbon-medium", name: "Gemini 4 Carbon (Medium)", alias: "gemini-4-carbon-medium" },
       { id: "gemini-4-carbon-low", name: "Gemini 4 Carbon (Low)", alias: "gemini-4-carbon-low" },

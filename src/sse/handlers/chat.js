@@ -264,6 +264,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   }
 
   const { provider, model } = modelInfo;
+  const clientModel = clientRawRequest?.body?.model || requestedModel || modelStr || `${provider}/${model}`;
+  const reqTag = log.tagForSession?.(clientModel) || "🔴";
 
   // Routing shown in the unified "▶" line (client model → provider/model)
 
@@ -286,20 +288,21 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     if (!credentials || credentials.allRateLimited || credentials.allUnsupported) {
       if (credentials?.allUnsupported) {
         const errorMsg = credentials.lastError || `Model ${model} is not supported by any account for ${provider}`;
-        log.warn("CHAT", `[${provider}/${model}] ${errorMsg}`);
+        log.errorLine?.(reqTag, "✗", `POST ${clientModel} → ${provider}/${model} · ${errorMsg}`);
         return errorResponse(HTTP_STATUS.BAD_REQUEST, `[${provider}/${model}] ${errorMsg}`, lastHeaders);
       }
       if (credentials?.allRateLimited) {
         const errorMsg = lastError || credentials.lastError || "Unavailable";
         const status = HTTP_STATUS.SERVICE_UNAVAILABLE;
-        log.warn("CHAT", `[${provider}/${model}] ${errorMsg} (${credentials.retryAfterHuman})`);
+        log.errorLine?.(reqTag, "✗", `POST ${clientModel} → ${provider}/${model} · ${errorMsg} (${credentials.retryAfterHuman})`);
         return unavailableResponse(status, `[${provider}/${model}] ${errorMsg}`, credentials.retryAfter, credentials.retryAfterHuman, lastHeaders);
       }
       if (excludeConnectionIds.size === 0) {
-        log.warn("AUTH", `No active credentials for provider: ${provider}`);
+        log.errorLine?.(reqTag, "✗", `POST ${clientModel} → ${provider}/${model} · No active credentials for provider: ${provider}`);
+        log.warn("AUTH", `No active credentials for provider: ${provider} (model: ${clientModel})`);
         return errorResponse(HTTP_STATUS.NOT_FOUND, `No active credentials for provider: ${provider}`);
       }
-      log.warn("CHAT", "No more accounts available", { provider });
+      log.errorLine?.(reqTag, "✗", `POST ${clientModel} → ${provider}/${model} · No more accounts available`);
       return errorResponse(lastStatus || HTTP_STATUS.SERVICE_UNAVAILABLE, lastError || "All accounts unavailable", lastHeaders);
     }
 

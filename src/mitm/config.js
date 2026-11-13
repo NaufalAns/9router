@@ -51,6 +51,10 @@ function isChatRequest(tool, req) {
 // Synonym map: rawModel from request → canonical alias key in mitmAlias DB
 const MODEL_SYNONYMS = {
   antigravity: {
+    "gemini-4-hydrogen": "gemini-4-hydrogen-medium",
+    "gemini-4-hydrogen-high": "gemini-4-hydrogen-high",
+    "gemini-4-hydrogen-medium": "gemini-4-hydrogen-medium",
+    "gemini-4-hydrogen-low": "gemini-4-hydrogen-low",
     "gemini-4-carbon": "gemini-4-carbon-medium",
     "gemini-4-carbon-high": "gemini-4-carbon-high",
     "gemini-4-carbon-medium": "gemini-4-carbon-medium",
@@ -107,6 +111,9 @@ const MODEL_SYNONYMS = {
 // Order matters: more specific patterns first. Catches AG renamed variants (e.g. gemini-pro-agent)
 const MODEL_PATTERNS = {
   antigravity: [
+    { match: /hydrogen.*high/i,                                    alias: "gemini-4-hydrogen-high" },
+    { match: /hydrogen.*low/i,                                     alias: "gemini-4-hydrogen-low" },
+    { match: /hydrogen/i,                                          alias: "gemini-4-hydrogen-medium" },
     { match: /carbon.*high/i,                                      alias: "gemini-4-carbon-high" },
     { match: /carbon.*low/i,                                       alias: "gemini-4-carbon-low" },
     { match: /carbon/i,                                            alias: "gemini-4-carbon-medium" },

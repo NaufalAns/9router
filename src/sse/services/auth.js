@@ -98,7 +98,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     log.debug("AUTH", `${provider} | total connections: ${connections.length}, excludeIds: ${excludeSet.size > 0 ? [...excludeSet].join(",") : "none"}, model: ${model || "any"}`);
 
     if (connections.length === 0) {
-      log.warn("AUTH", `No credentials for ${provider}`);
+      log.warn("AUTH", `No credentials for ${provider}${model ? ` (model: ${model})` : ""}`);
       return null;
     }
 
@@ -328,6 +328,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         strictProxy: resolvedProxy.strictProxy === true,
       },
       connectionId: connection.id,
+      accountComboName: accountCombo ? (accountCombo.name || accountCombo.model) : null,
       // Include current status for optimization check
       testStatus: connection.testStatus,
       lastError: connection.lastError,

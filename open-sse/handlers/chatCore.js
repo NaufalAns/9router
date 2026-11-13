@@ -244,8 +244,20 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // Request line: one correlated summary (fmt + thinking + counts + account)
   if (log?.line) {
     const clientModel = clientRawRequest?.body?.model || `${provider}/${model}`;
-    const msgN = translatedBody.messages?.length || translatedBody.input?.length || translatedBody.contents?.length || body.messages?.length || body.input?.length || 0;
-    const toolN = translatedBody.tools?.length || body.tools?.length || 0;
+    const msgN = translatedBody.messages?.length
+      || translatedBody.input?.length
+      || translatedBody.contents?.length
+      || translatedBody.request?.contents?.length
+      || body.messages?.length
+      || body.input?.length
+      || body.contents?.length
+      || body.request?.contents?.length
+      || 0;
+    const toolN = translatedBody.tools?.length
+      || translatedBody.request?.tools?.length
+      || body.tools?.length
+      || body.request?.tools?.length
+      || 0;
     const fmtStr = passthrough ? `FMT: ${sourceFormat} (passthrough)` : `FMT: ${sourceFormat}→${targetFormat}`;
     const showThinking = provider !== "grok-cli" || supportsGrokCliReasoningEffort(model);
     const think = showThinking ? log.fmtThink?.(extractThinking(translatedBody)) : null;
@@ -258,6 +270,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     ];
     if (toolN) parts.push(`${toolN} TOOL`);
     if (think) parts.push(`THINK:${think}`);
+    if (credentials?.accountComboName) parts.push(`COMBO:${credentials.accountComboName}`);
     parts.push(`ACC:${acc}`);
     log.line(reqTag, "▶", parts.join(" · "));
   }

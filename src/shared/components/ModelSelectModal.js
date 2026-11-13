@@ -764,13 +764,17 @@ export default function ModelSelectModal({
             </div>
             <div className="flex flex-wrap gap-1.5">
               {filteredAccountCombos.map((ac) => {
-                const comboValue = ac.name || ac.model;
-                const isSelected = selectedModel === comboValue || selectedModel === ac.model || (ac.name && selectedModel === ac.name);
-                const isAdded = addedModelValues.includes(comboValue) || addedModelValues.includes(ac.model) || (ac.name && addedModelValues.includes(ac.name));
+                const alias = getProviderAlias(ac.provider) || ac.provider;
+                const prefixedModel = ac.model && !ac.model.includes("/") && alias
+                  ? `${alias}/${ac.model}`
+                  : ac.model;
+                const comboValue = ac.name || prefixedModel;
+                const isSelected = selectedModel === comboValue || selectedModel === ac.model || selectedModel === prefixedModel || (ac.name && selectedModel === ac.name);
+                const isAdded = addedModelValues.includes(comboValue) || addedModelValues.includes(ac.model) || addedModelValues.includes(prefixedModel) || (ac.name && addedModelValues.includes(ac.name));
                 return (
                   <button
                     key={ac.id}
-                    onClick={() => handleSelect({ id: comboValue, name: ac.name || ac.model, value: comboValue })}
+                    onClick={() => handleSelect({ id: comboValue, name: ac.name || prefixedModel, value: comboValue })}
                     className={`
                       px-2 py-1 rounded-xl text-xs font-medium transition-all border hover:cursor-pointer flex items-center gap-1.5
                       ${isSelected
@@ -780,13 +784,13 @@ export default function ModelSelectModal({
                           : "bg-surface border-border text-text-main hover:border-amber-500/50 hover:bg-amber-500/5"
                       }
                     `}
-                    title={`${ac.name ? `${ac.name} → ` : ""}${ac.model} (${ac.connectionIds?.length || 0} akun, ${ac.fallbackMode})`}
+                    title={`${ac.name ? `${ac.name} → ` : ""}${prefixedModel} (${ac.connectionIds?.length || 0} akun, ${ac.fallbackMode})`}
                   >
                     <span className="material-symbols-outlined text-[13px] opacity-75">switch_account</span>
                     {isAdded && (
                       <span className="material-symbols-outlined leading-none" style={{ fontSize: "10px" }}>check</span>
                     )}
-                    <span>{ac.name || ac.model}</span>
+                    <span>{ac.name || prefixedModel}</span>
                     <span className="text-[10px] opacity-75 font-mono">({ac.fallbackMode})</span>
                   </button>
                 );
