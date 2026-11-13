@@ -26,10 +26,10 @@ describe("Antigravity unsupported models handling", () => {
   });
 
   describe("isUnsupportedModelError", () => {
-    it("detects 'Thinking level MINIMAL is not supported for this model' error on Antigravity", () => {
+    it("does not treat 'Thinking level MINIMAL is not supported for this model' as an account-level unsupported model error", () => {
       const errorMsg = '[400]: Thinking level MINIMAL is not supported for this model. Please retry with other thinking level. {"code":400,"message":"Thinking level MINIMAL is not supported for this model. Please retry with other thinking level.","status":"INVALID_ARGUMENT"}';
-      expect(isUnsupportedModelError("antigravity", 400, errorMsg)).toBe(true);
-      expect(isUnsupportedModelError("ag", 400, errorMsg)).toBe(true);
+      expect(isUnsupportedModelError("antigravity", 400, errorMsg)).toBe(false);
+      expect(isUnsupportedModelError("ag", 400, errorMsg)).toBe(false);
     });
 
     it("detects generic 'not supported for this model' on Antigravity", () => {
@@ -60,7 +60,7 @@ describe("Antigravity unsupported models handling", () => {
       mocks.getProviderConnections.mockResolvedValue([mockConn]);
       mocks.updateProviderConnection.mockResolvedValue({});
 
-      const errorText = 'Thinking level MINIMAL is not supported for this model. Please retry with other thinking level.';
+      const errorText = 'Model is not supported for this account/project';
       const res = await markAccountUnavailable("conn-1", 400, errorText, "antigravity", "gemini-3.8-flash-high");
 
       expect(res.shouldFallback).toBe(true);
@@ -80,7 +80,7 @@ describe("Antigravity unsupported models handling", () => {
       mocks.getProviderConnections.mockResolvedValue([mockConn]);
       mocks.updateProviderConnection.mockResolvedValue({});
 
-      const errorText = 'Thinking level MINIMAL is not supported for this model.';
+      const errorText = 'Model is not supported for this account/project';
       const res = await markAccountUnavailable("conn-2", 400, errorText, "antigravity", "gemini-3.8-flash-high(high)");
 
       expect(res.shouldFallback).toBe(true);
@@ -97,7 +97,7 @@ describe("Antigravity unsupported models handling", () => {
       };
       mocks.getProviderConnections.mockResolvedValue([mockConn]);
 
-      const errorText = 'Thinking level MINIMAL is not supported for this model.';
+      const errorText = 'Model is not supported for this account/project';
       const res = await markAccountUnavailable("conn-3", 400, errorText, "antigravity", "gemini-3.8-flash-high");
 
       expect(res.shouldFallback).toBe(true);

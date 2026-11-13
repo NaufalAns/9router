@@ -26,8 +26,9 @@ export function isUnsupportedModelError(provider, status, errorText) {
   const text = typeof errorText === "string" ? errorText : JSON.stringify(errorText || "");
 
   if (providerId === "antigravity" || providerId === "gemini-cli") {
-    // 1. Thinking level error (e.g. "Thinking level MINIMAL is not supported for this model.")
-    if (/thinking\s+level\s+.*is\s+not\s+supported/i.test(text)) return true;
+    // 1. Thinking level errors (e.g. "Thinking level MINIMAL is not supported for this model.")
+    // are request-parameter errors, not account-level unsupported-model errors.
+    if (/thinking\s+level\s+.*is\s+not\s+supported/i.test(text)) return false;
     // 2. Explicit model not supported wording
     if (/not\s+supported\s+for\s+this\s+model/i.test(text)) return true;
     if (/model\s+(is\s+)?not\s+supported/i.test(text)) return true;
