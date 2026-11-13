@@ -8,6 +8,7 @@ import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { cleanJSONSchemaForAntigravity, normalizeGeminiContents } from "../translator/formats/gemini.js";
 import { DEFAULT_THINKING_AG_SIGNATURE } from "../config/defaultThinkingSignature.js";
 import { getGeminiThoughtSignatureSync } from "../services/thoughtSignatureStore.js";
+import { getThinkingLevels } from "../providers/thinkingLevels.js";
 
 // Sanitize function name: Gemini requires [a-zA-Z_][a-zA-Z0-9_.:\-]{0,63}
 function sanitizeFunctionName(name) {
@@ -315,6 +316,21 @@ export class AntigravityExecutor extends BaseExecutor {
     const generationConfig = { ...(requestWithoutTools.generationConfig || {}) };
     if (generationConfig.maxOutputTokens > MAX_ANTIGRAVITY_OUTPUT_TOKENS) {
       generationConfig.maxOutputTokens = MAX_ANTIGRAVITY_OUTPUT_TOKENS;
+    }
+    const rawThinkingLevel = generationConfig.thinkingConfig?.thinkingLevel;
+    if (typeof rawThinkingLevel === "string" && rawThinkingLevel.trim()) {
+      const effectiveModel = String(body.model || model || "").replace(/\([^()]+\)\s*$/, "").trim();
+      const supportedLevels = getThinkingLevels("antigravity", effectiveModel);
+      const normalized = rawThinkingLevel.toLowerCase();
+      if (supportedLevels?.length && !supportedLevels.includes(normalized)) {
+        const lowest = supportedLevels.find((l) => l !== "none");
+        if (lowest) {
+          generationConfig.thinkingConfig = {
+            ...generationConfig.thinkingConfig,
+            thinkingLevel: rawThinkingLevel === rawThinkingLevel.toUpperCase() ? lowest.toUpperCase() : lowest,
+          };
+        }
+      }
     }
 
     const transformedRequest = {
