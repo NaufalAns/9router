@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { Card, Button, Badge, Modal, Input, ModelSelectModal } from "@/shared/components";
 import Image from "next/image";
 
@@ -20,29 +20,43 @@ export default function AntigravityToolCard({
   const [startingStep, setStartingStep] = useState(null); // "cert" | "server" | "dns" | null
   const [showPasswordModal, setShowPasswordModal] = useState(false);
   const [sudoPassword, setSudoPassword] = useState("");
-  const [selectedApiKey, setSelectedApiKey] = useState("");
+  const [selectedApiKey, setSelectedApiKey] = useState(() => apiKeys?.[0]?.key || "");
+  const activeApiKey = selectedApiKey || apiKeys?.[0]?.key || "";
   const [message, setMessage] = useState(null);
   const [modelMappings, setModelMappings] = useState({});
   const [modalOpen, setModalOpen] = useState(false);
   const [currentEditingAlias, setCurrentEditingAlias] = useState(null);
   const [modelAliases, setModelAliases] = useState({});
+  const [showAddCustomModal, setShowAddCustomModal] = useState(false);
+  const [customAliasInput, setCustomAliasInput] = useState("");
 
-  useEffect(() => {
-    if (apiKeys?.length > 0 && !selectedApiKey) {
-      setSelectedApiKey(apiKeys[0].key);
-    }
-  }, [apiKeys, selectedApiKey]);
+  const allMitmModels = useMemo(() => {
+    const list = [...(tool.defaultModels || [])];
+    const knownAliases = new Set(list.map((m) => m.alias));
+    Object.keys(modelMappings).forEach((alias) => {
+      if (!knownAliases.has(alias)) {
+        list.push({ id: alias, name: alias, alias, isCustom: true });
+        knownAliases.add(alias);
+      }
+    });
+    return list;
+  }, [tool.defaultModels, modelMappings]);
 
-  useEffect(() => {
-    if (initialStatus) setStatus(initialStatus);
-  }, [initialStatus]);
+  const handleAddCustomMapping = () => {
+    const trimmed = customAliasInput.trim();
+    if (!trimmed) return;
+    setModelMappings((prev) => ({ ...prev, [trimmed]: prev[trimmed] || "" }));
+    setCustomAliasInput("");
+    setShowAddCustomModal(false);
+  };
 
-  useEffect(() => {
-    if (!isExpanded) return;
-    if (!status) fetchStatus();
-    loadSavedMappings();
-    fetchModelAliases();
-  }, [isExpanded]);
+  const handleDeleteMapping = (alias) => {
+    setModelMappings((prev) => {
+      const next = { ...prev };
+      delete next[alias];
+      return next;
+    });
+  };
 
   const loadSavedMappings = async () => {
     try {
@@ -83,6 +97,50 @@ export default function AntigravityToolCard({
     }
   };
 
+  useEffect(() => {
+    if (!isExpanded) return undefined;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch("/api/cli-tools/antigravity-mitm");
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          setStatus(data);
+        }
+      } catch {
+        if (!cancelled) setStatus({ running: false });
+      }
+
+      try {
+        const res = await fetch("/api/cli-tools/antigravity-mitm/alias?tool=antigravity");
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          const aliases = data.aliases || {};
+          if (Object.keys(aliases).length > 0) {
+            setModelMappings(aliases);
+          }
+        }
+      } catch {
+        // ignore
+      }
+
+      try {
+        const res = await fetch("/api/models/alias");
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          if (data.aliases) setModelAliases(data.aliases);
+        }
+      } catch {
+        // ignore
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isExpanded]);
+
   // MITM elevation is decided by the server OS, not by this browser's OS.
   const serverIsWindows = status?.isWin === true;
   const canRunWithoutPassword = serverIsWindows || status?.hasCachedPassword || status?.needsSudoPassword === false;
@@ -111,8 +169,7 @@ export default function AntigravityToolCard({
     // Show steps progressing in order
     setStartingStep("cert");
     try {
-      const keyToUse = selectedApiKey?.trim()
-        || (apiKeys?.length > 0 ? apiKeys[0].key : null)
+      const keyToUse = activeApiKey?.trim()
         || (!cloudEnabled ? "sk_9router" : null);
 
       const res = await fetch("/api/cli-tools/antigravity-mitm", {
@@ -325,7 +382,7 @@ export default function AntigravityToolCard({
                 <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
                 {apiKeys.length > 0 ? (
                   <select
-                    value={selectedApiKey}
+                    value={activeApiKey}
                     onChange={(e) => setSelectedApiKey(e.target.value)}
                     className="w-full min-w-0 px-2 py-2 bg-surface rounded text-xs border border-border focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5"
                   >
@@ -338,16 +395,21 @@ export default function AntigravityToolCard({
                 )}
               </div>
 
-              {tool.defaultModels.map((model) => (
+              {allMitmModels.map((model) => (
                 <div key={model.alias} className="grid grid-cols-1 gap-1.5 sm:grid-cols-[8rem_auto_1fr_auto] sm:items-center sm:gap-2">
-                  <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm">{model.name}</span>
+                  <div className="flex items-center gap-1.5 justify-end">
+                    {model.isCustom && (
+                      <span className="text-[10px] px-1 py-0.5 rounded bg-surface border border-border text-text-muted">Custom</span>
+                    )}
+                    <span className="text-xs font-semibold text-text-main sm:text-right sm:text-sm truncate" title={model.name}>{model.name}</span>
+                  </div>
                   <span className="material-symbols-outlined hidden text-text-muted text-[14px] sm:inline">arrow_forward</span>
                   <div className="relative w-full min-w-0">
                     <input
                       type="text"
                       value={modelMappings[model.alias] || ""}
                       onChange={(e) => handleModelMappingChange(model.alias, e.target.value)}
-                      placeholder="provider/model-id"
+                      placeholder="provider/model-id or Combo name"
                       className="w-full min-w-0 pl-2 pr-7 py-2 bg-surface rounded border border-border text-xs focus:outline-none focus:ring-1 focus:ring-primary/50 sm:py-1.5"
                     />
                     {modelMappings[model.alias] && (
@@ -360,17 +422,29 @@ export default function AntigravityToolCard({
                       </button>
                     )}
                   </div>
-                  <button
-                    onClick={() => openModelSelector(model.alias)}
-                    disabled={!hasActiveProviders}
-                    className={`w-full sm:w-auto rounded border px-2 py-2 text-xs transition-colors sm:py-1.5 whitespace-nowrap sm:shrink-0 ${hasActiveProviders ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}
-                  >
-                    Select
-                  </button>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => openModelSelector(model.alias)}
+                      disabled={!hasActiveProviders}
+                      className={`w-full sm:w-auto rounded border px-2 py-2 text-xs transition-colors sm:py-1.5 whitespace-nowrap sm:shrink-0 ${hasActiveProviders ? "bg-surface border-border text-text-main hover:border-primary cursor-pointer" : "opacity-50 cursor-not-allowed border-border"}`}
+                    >
+                      Select
+                    </button>
+                    {model.isCustom && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMapping(model.alias)}
+                        className="p-1.5 text-text-muted hover:text-red-500 rounded transition-colors cursor-pointer"
+                        title="Remove custom mapping"
+                      >
+                        <span className="material-symbols-outlined text-[16px]">delete</span>
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
 
-              <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center">
+              <div className="grid grid-cols-1 gap-2 sm:flex sm:items-center sm:justify-between">
                 <Button
                   variant="primary"
                   size="sm"
@@ -380,6 +454,14 @@ export default function AntigravityToolCard({
                   <span className="material-symbols-outlined text-[14px] mr-1">save</span>
                   Save Mappings
                 </Button>
+                <button
+                  type="button"
+                  onClick={() => setShowAddCustomModal(true)}
+                  className="px-2.5 py-1.5 rounded-lg border border-border bg-surface hover:border-primary/50 text-xs font-medium text-text-main flex items-center gap-1 transition-colors cursor-pointer"
+                >
+                  <span className="material-symbols-outlined text-[14px]">add</span>
+                  Add Model Mapping
+                </button>
               </div>
             </>
           )}
@@ -458,6 +540,51 @@ export default function AntigravityToolCard({
               loading={loading}
             >
               Confirm
+            </Button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Add Custom Mapping Modal */}
+      <Modal
+        isOpen={showAddCustomModal}
+        onClose={() => {
+          setShowAddCustomModal(false);
+          setCustomAliasInput("");
+        }}
+        title="Add Model Mapping"
+        size="sm"
+      >
+        <div className="flex flex-col gap-4">
+          <p className="text-xs text-text-muted">
+            Enter the model alias sent by the IDE (e.g. <code className="bg-surface px-1 rounded text-text-main">gemini-4-custom</code> or custom model).
+          </p>
+          <Input
+            placeholder="Model alias (e.g. custom-model-name)"
+            value={customAliasInput}
+            onChange={(e) => setCustomAliasInput(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleAddCustomMapping();
+            }}
+          />
+          <div className="flex items-center justify-end gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                setShowAddCustomModal(false);
+                setCustomAliasInput("");
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={handleAddCustomMapping}
+              disabled={!customAliasInput.trim()}
+            >
+              Add
             </Button>
           </div>
         </div>

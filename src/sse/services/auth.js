@@ -1,4 +1,4 @@
-import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools } from "@/lib/localDb";
+import { getProviderConnections, validateApiKey, updateProviderConnection, getSettings, getProxyPools, getAccountCombos } from "@/lib/localDb";
 import { resolveConnectionProxyConfig, pickProxyPoolId } from "@/lib/network/connectionProxy";
 import { formatRetryAfter, checkFallbackError, isModelLockActive, buildModelLockUpdate, getEarliestModelLockUntil } from "open-sse/services/accountFallback.js";
 import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
@@ -50,7 +50,9 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
   // Normalize to Set for consistent handling
   const excludeSet = excludeConnectionIds instanceof Set
     ? excludeConnectionIds
-    : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
+    : Array.isArray(excludeConnectionIds)
+      ? new Set(excludeConnectionIds)
+      : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
   const preferredConnectionId = options?.preferredConnectionId || null;
   const requestedModel = options?.requestedModel || model;
   // Acquire mutex to prevent race conditions
@@ -106,15 +108,39 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     const cleanModel = typeof model === "string" ? model.replace(/\([^()]+\)\s*$/, "").trim() : model;
 
+    // Check Account Combos for this provider and model
+    let accountCombo = options.accountCombo || null;
+    if (!accountCombo) {
+      try {
+        const activeAccountCombos = await getAccountCombos({ provider: providerId, isActive: true });
+        accountCombo = (activeAccountCombos || []).find((ac) => {
+          const acModel = (ac.model || "").trim();
+          const acBare = acModel.includes("/") ? acModel.slice(acModel.indexOf("/") + 1) : acModel;
+          return (
+            acModel === cleanModel ||
+            acModel === model ||
+            acBare === cleanModel ||
+            acBare === model ||
+            acModel === `${providerId}/${cleanModel}` ||
+            acModel === `${providerId}/${model}` ||
+            (requestedModel && (acModel === requestedModel || acBare === requestedModel)) ||
+            (ac.name && (ac.name === model || ac.name === cleanModel || (requestedModel && ac.name === requestedModel)))
+          );
+        });
+      } catch (e) {
+        log.warn("AUTH", `Failed to load account combos: ${e.message}`);
+      }
+    }
 
+    const isStrictCombo = accountCombo?.fallbackMode === "strict";
+    const allowedConnectionIds = accountCombo && Array.isArray(accountCombo.connectionIds)
+      ? new Set(accountCombo.connectionIds)
+      : null;
 
     // Filter out model-locked, excluded, unsupported, and Antigravity quota-exhausted connections.
-
-
-    const availableConnections = connections.filter(c => {
-
-
+    let availableConnections = connections.filter((c) => {
       if (excludeSet.has(c.id)) return false;
+      if (isStrictCombo && allowedConnectionIds && !allowedConnectionIds.has(c.id)) return false;
       if (isModelLockActive(c, model)) return false;
       if (cleanModel && Array.isArray(c.unsupportedModels)) {
         if (c.unsupportedModels.includes(cleanModel) || (model && c.unsupportedModels.includes(model))) {
@@ -136,7 +162,15 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       return true;
     });
 
-    log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length}`);
+    // If fallbackMode is "default" (non-strict) and specific accounts are assigned, prioritize assigned accounts
+    if (!isStrictCombo && allowedConnectionIds && allowedConnectionIds.size > 0) {
+      const assignedAvailable = availableConnections.filter((c) => allowedConnectionIds.has(c.id));
+      if (assignedAvailable.length > 0) {
+        availableConnections = assignedAvailable;
+      }
+    }
+
+    log.debug("AUTH", `${provider} | available: ${availableConnections.length}/${connections.length}${accountCombo ? ` (account-combo: ${accountCombo.model}, mode: ${accountCombo.fallbackMode})` : ""}`);
     connections.forEach(c => {
       const excluded = excludeSet.has(c.id);
       const locked = isModelLockActive(c, model);
@@ -151,6 +185,14 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
 
     if (availableConnections.length === 0) {
       if (cleanModel) {
+        if (isStrictCombo && allowedConnectionIds) {
+          log.warn("AUTH", `${provider} | no assigned accounts available for model ${cleanModel} in Account Combo`);
+          return {
+            allUnsupported: true,
+            lastError: `No active accounts available for model ${cleanModel} in configured Account Combo`,
+            lastErrorCode: 400,
+          };
+        }
 
         const unsupportedConns = connections.filter(c =>
 

@@ -51,6 +51,14 @@ function isChatRequest(tool, req) {
 // Synonym map: rawModel from request → canonical alias key in mitmAlias DB
 const MODEL_SYNONYMS = {
   antigravity: {
+    "gemini-4-carbon": "gemini-4-carbon-medium",
+    "gemini-4-carbon-high": "gemini-4-carbon-high",
+    "gemini-4-carbon-medium": "gemini-4-carbon-medium",
+    "gemini-4-carbon-low": "gemini-4-carbon-low",
+    "gemini-4-argon": "gemini-4-argon-medium",
+    "gemini-4-argon-high": "gemini-4-argon-high",
+    "gemini-4-argon-medium": "gemini-4-argon-medium",
+    "gemini-4-argon-low": "gemini-4-argon-low",
     "gemini-default": "gemini-3.8-flash-medium",
     "gemini-3.5-flash-high": "gemini-3.8-flash-high",
     "gemini-3.5-flash-medium": "gemini-3.8-flash-medium",
@@ -99,6 +107,12 @@ const MODEL_SYNONYMS = {
 // Order matters: more specific patterns first. Catches AG renamed variants (e.g. gemini-pro-agent)
 const MODEL_PATTERNS = {
   antigravity: [
+    { match: /carbon.*high/i,                                      alias: "gemini-4-carbon-high" },
+    { match: /carbon.*low/i,                                       alias: "gemini-4-carbon-low" },
+    { match: /carbon/i,                                            alias: "gemini-4-carbon-medium" },
+    { match: /argon.*high/i,                                       alias: "gemini-4-argon-high" },
+    { match: /argon.*low/i,                                        alias: "gemini-4-argon-low" },
+    { match: /argon/i,                                             alias: "gemini-4-argon-medium" },
     { match: /flash.*extra.*low|extra.*low.*flash|flash.*low|low.*flash/i, alias: "gemini-3.8-flash-low" },
     { match: /flash.*medium|medium.*flash/i,                       alias: "gemini-3.8-flash-medium" },
     { match: /flash.*agent|agent.*flash|flash/i,                   alias: "gemini-3.8-flash-high" },

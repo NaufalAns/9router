@@ -40,7 +40,6 @@ function useLiveProviderModels(isOpen, connectionIds, label) {
   useEffect(() => {
     const ids = idsKey ? idsKey.split("|") : [];
     if (!isOpen || ids.length === 0) {
-      setModels([]);
       return undefined;
     }
 
@@ -69,7 +68,7 @@ function useLiveProviderModels(isOpen, connectionIds, label) {
     return () => { cancelled = true; };
   }, [isOpen, idsKey, label]);
 
-  return models;
+  return isOpen && idsKey ? models : [];
 }
 
 export default function ModelSelectModal({
@@ -92,21 +91,89 @@ export default function ModelSelectModal({
 }) {
   // Live-fetched connections on modal open, fallback to activeProviders prop
   const [fetchedConnections, setFetchedConnections] = useState(null);
-
-  const fetchConnections = async () => {
-    try {
-      const res = await fetch("/api/providers");
-      if (!res.ok) throw new Error(`Failed to fetch providers: ${res.status}`);
-      const data = await res.json();
-      setFetchedConnections(data.connections || []);
-    } catch (error) {
-      console.error("Error fetching providers in ModelSelectModal:", error);
-      setFetchedConnections([]);
-    }
-  };
+  const { getCaps } = useModelCaps();
+  const [searchQuery, setSearchQuery] = useState("");
+  const [combos, setCombos] = useState([]);
+  const [accountCombos, setAccountCombos] = useState([]);
+  const [providerNodes, setProviderNodes] = useState([]);
+  const [customModels, setCustomModels] = useState([]);
+  const [disabledModels, setDisabledModels] = useState({});
 
   useEffect(() => {
-    if (isOpen) fetchConnections();
+    if (!isOpen) return undefined;
+    let cancelled = false;
+
+    (async () => {
+      try {
+        const res = await fetch("/api/providers");
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          setFetchedConnections(data.connections || []);
+        }
+      } catch (error) {
+        console.error("Error fetching providers in ModelSelectModal:", error);
+        if (!cancelled) setFetchedConnections([]);
+      }
+
+      try {
+        const res = await fetch("/api/combos");
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          setCombos(data.combos || []);
+        }
+      } catch (error) {
+        console.error("Error fetching combos:", error);
+        if (!cancelled) setCombos([]);
+      }
+
+      try {
+        const res = await fetch("/api/account-combos");
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          setAccountCombos((data.accountCombos || []).filter((c) => c.isActive !== false));
+        }
+      } catch (error) {
+        console.error("Error fetching account combos:", error);
+        if (!cancelled) setAccountCombos([]);
+      }
+
+      try {
+        const res = await fetch("/api/provider-nodes");
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          setProviderNodes(data.nodes || []);
+        }
+      } catch (error) {
+        console.error("Error fetching provider nodes:", error);
+        if (!cancelled) setProviderNodes([]);
+      }
+
+      try {
+        const res = await fetch("/api/models/custom");
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          setCustomModels(data.models || []);
+        }
+      } catch (error) {
+        console.error("Error fetching custom models:", error);
+        if (!cancelled) setCustomModels([]);
+      }
+
+      try {
+        const res = await fetch("/api/models/disabled");
+        if (res.ok && !cancelled) {
+          const data = await res.json();
+          setDisabledModels(data.disabled || {});
+        }
+      } catch (error) {
+        console.error("Error fetching disabled models:", error);
+        if (!cancelled) setDisabledModels({});
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [isOpen]);
 
   const effectiveConnections = useMemo(() => {
@@ -129,17 +196,6 @@ export default function ModelSelectModal({
     return getDeactivatedProviderIds(effectiveConnections);
   }, [effectiveConnections]);
 
-  const { getCaps } = useModelCaps();
-  const [searchQuery, setSearchQuery] = useState("");
-  const [combos, setCombos] = useState([]);
-  const [providerNodes, setProviderNodes] = useState([]);
-  const [customModels, setCustomModels] = useState([]);
-  const [disabledModels, setDisabledModels] = useState({});
-  // Cursor and Cline expose the usable catalog per account, so the static catalog is
-  // kept only as a fallback: it goes stale quickly and entitlements differ per account.
-  // Single map driven by LIVE_CATALOG_PROVIDERS so the constant cannot drift
-  // from the memos below; per-provider arrays stay referentially stable unless
-  // activeProviders itself changes.
   const liveConnectionIdsByProvider = useMemo(() => {
     const map = Object.fromEntries(LIVE_CATALOG_PROVIDERS.map((id) => [id, []]));
     for (const p of filteredActiveProviders) {
@@ -156,70 +212,6 @@ export default function ModelSelectModal({
   const clineModels = useLiveProviderModels(isOpen, clineConnectionIds, "Cline");
   const clinepassModels = useLiveProviderModels(isOpen, clinepassConnectionIds, "ClinePass");
   const zedModels = useLiveProviderModels(isOpen, zedConnectionIds, "Zed");
-
-  const fetchCombos = async () => {
-    try {
-      const res = await fetch("/api/combos");
-      if (!res.ok) throw new Error(`Failed to fetch combos: ${res.status}`);
-      const data = await res.json();
-      setCombos(data.combos || []);
-    } catch (error) {
-      console.error("Error fetching combos:", error);
-      setCombos([]);
-    }
-  };
-
-  useEffect(() => {
-    if (isOpen) fetchCombos();
-  }, [isOpen]);
-
-  const fetchProviderNodes = async () => {
-    try {
-      const res = await fetch("/api/provider-nodes");
-      if (!res.ok) throw new Error(`Failed to fetch provider nodes: ${res.status}`);
-      const data = await res.json();
-      setProviderNodes(data.nodes || []);
-    } catch (error) {
-      console.error("Error fetching provider nodes:", error);
-      setProviderNodes([]);
-    }
-  };
-
-  useEffect(() => {
-    if (isOpen) fetchProviderNodes();
-  }, [isOpen]);
-
-  const fetchCustomModels = async () => {
-    try {
-      const res = await fetch("/api/models/custom");
-      if (!res.ok) throw new Error(`Failed to fetch custom models: ${res.status}`);
-      const data = await res.json();
-      setCustomModels(data.models || []);
-    } catch (error) {
-      console.error("Error fetching custom models:", error);
-      setCustomModels([]);
-    }
-  };
-
-  useEffect(() => {
-    if (isOpen) fetchCustomModels();
-  }, [isOpen]);
-
-  const fetchDisabledModels = async () => {
-    try {
-      const res = await fetch("/api/models/disabled");
-      if (!res.ok) throw new Error(`Failed to fetch disabled models: ${res.status}`);
-      const data = await res.json();
-      setDisabledModels(data.disabled || {});
-    } catch (error) {
-      console.error("Error fetching disabled models:", error);
-      setDisabledModels({});
-    }
-  };
-
-  useEffect(() => {
-    if (isOpen) fetchDisabledModels();
-  }, [isOpen]);
 
   const allProviders = useMemo(() => ({ ...OAUTH_PROVIDERS, ...FREE_PROVIDERS, ...FREE_TIER_PROVIDERS, ...APIKEY_PROVIDERS }), []);
 
@@ -512,6 +504,18 @@ export default function ModelSelectModal({
     return combos.filter(c => matchesSearch(c.name, parsedQuery));
   }, [combos, parsedQuery, kindFilter, capFilter]);
 
+  // Filter account combos by search query
+  const filteredAccountCombos = useMemo(() => {
+    if (kindFilter || capFilter) return [];
+    if (parsedQuery.isEmpty) return accountCombos;
+    return accountCombos.filter((ac) => {
+      if (ac.name && matchesSearch(ac.name, parsedQuery)) return true;
+      if (ac.model && matchesSearch(ac.model, parsedQuery)) return true;
+      if (ac.provider && matchesSearch(ac.provider, parsedQuery)) return true;
+      return false;
+    });
+  }, [accountCombos, parsedQuery, kindFilter, capFilter]);
+
   // Sort models alphabetically, with added models floated to top
   const sortModels = (models) => {
     const added = models.filter(m => addedModelValues.includes(m.value)).sort((a, b) => a.name.localeCompare(b.name));
@@ -743,6 +747,47 @@ export default function ModelSelectModal({
                       <span className="material-symbols-outlined leading-none" style={{ fontSize: "10px" }}>check</span>
                     )}
                     {combo.name}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        {/* Account Combos section */}
+        {filteredAccountCombos.length > 0 && (
+          <div>
+            <div className="flex items-center gap-1.5 mb-1.5 sticky top-0 bg-surface py-0.5">
+              <span className="material-symbols-outlined text-amber-500 text-[14px]">switch_account</span>
+              <span className="text-xs font-medium text-amber-500">Combo Akun</span>
+              <span className="text-[10px] text-text-muted">({filteredAccountCombos.length})</span>
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {filteredAccountCombos.map((ac) => {
+                const comboValue = ac.name || ac.model;
+                const isSelected = selectedModel === comboValue || selectedModel === ac.model || (ac.name && selectedModel === ac.name);
+                const isAdded = addedModelValues.includes(comboValue) || addedModelValues.includes(ac.model) || (ac.name && addedModelValues.includes(ac.name));
+                return (
+                  <button
+                    key={ac.id}
+                    onClick={() => handleSelect({ id: comboValue, name: ac.name || ac.model, value: comboValue })}
+                    className={`
+                      px-2 py-1 rounded-xl text-xs font-medium transition-all border hover:cursor-pointer flex items-center gap-1.5
+                      ${isSelected
+                        ? "bg-amber-500 text-white border-amber-500"
+                        : isAdded
+                          ? "bg-amber-500 border-amber-500 text-white hover:bg-amber-600"
+                          : "bg-surface border-border text-text-main hover:border-amber-500/50 hover:bg-amber-500/5"
+                      }
+                    `}
+                    title={`${ac.name ? `${ac.name} → ` : ""}${ac.model} (${ac.connectionIds?.length || 0} akun, ${ac.fallbackMode})`}
+                  >
+                    <span className="material-symbols-outlined text-[13px] opacity-75">switch_account</span>
+                    {isAdded && (
+                      <span className="material-symbols-outlined leading-none" style={{ fontSize: "10px" }}>check</span>
+                    )}
+                    <span>{ac.name || ac.model}</span>
+                    <span className="text-[10px] opacity-75 font-mono">({ac.fallbackMode})</span>
                   </button>
                 );
               })}

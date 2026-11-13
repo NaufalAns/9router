@@ -7,7 +7,7 @@ import {
   isAnthropicCompatibleProvider,
   isOpenAICompatibleProvider,
 } from "@/shared/constants/providers";
-import { getProviderConnections, getCombos, getCustomModels, getModelAliases } from "@/lib/localDb";
+import { getProviderConnections, getCombos, getCustomModels, getModelAliases, getAccountCombos } from "@/lib/localDb";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { getKeyAccessContext, filterModelsListForKey } from "@/sse/services/keyAccess.js";
 import { resolveKiroModels } from "open-sse/services/kiroModels.js";
@@ -354,6 +354,13 @@ export async function buildModelsList(kindFilter, options = {}) {
     console.log("Could not fetch custom models");
   }
 
+  let accountCombos = [];
+  try {
+    accountCombos = await getAccountCombos({ isActive: true });
+  } catch (e) {
+    console.log("Could not fetch account combos");
+  }
+
   let modelAliases = {};
   try {
     modelAliases = await getModelAliases();
@@ -368,6 +375,7 @@ export async function buildModelsList(kindFilter, options = {}) {
     console.log("Could not fetch disabled models");
   }
   const isDisabled = (alias, modelId) => Array.isArray(disabledByAlias[alias]) && disabledByAlias[alias].includes(modelId);
+  const activeConnIds = new Set(connections.map((c) => c.id));
 
   const activeConnectionByProvider = new Map();
   for (const conn of connections) {
@@ -582,6 +590,23 @@ export async function buildModelsList(kindFilter, options = {}) {
         const allowAsLlm = kind === "imageToText" && kindFilter.includes(LLM_KIND);
         if (!kindFilter.includes(kind) && !allowAsLlm) continue;
         if (isDisabled(outputAlias, modelId) || isDisabled(staticAlias, modelId) || isDisabled(providerId, modelId)) continue;
+
+        // Account combo strict check: if a model has a strict account combo with no active connections, hide it
+        const matchedAccountCombo = (accountCombos || []).find((ac) => {
+          const p = ac.provider;
+          if (p !== providerId && p !== staticAlias && p !== outputAlias) return false;
+          const acModel = (ac.model || "").trim();
+          const acBare = acModel.includes("/") ? acModel.slice(acModel.indexOf("/") + 1) : acModel;
+          return acModel === modelId || acBare === modelId || acModel === `${providerId}/${modelId}` || acModel === `${outputAlias}/${modelId}`;
+        });
+
+        if (matchedAccountCombo && matchedAccountCombo.fallbackMode === "strict") {
+          const assignedIds = Array.isArray(matchedAccountCombo.connectionIds) ? matchedAccountCombo.connectionIds : [];
+          const hasActiveAssigned = assignedIds.some((id) => activeConnIds.has(id));
+          if (!hasActiveAssigned) {
+            continue;
+          }
+        }
 
         const model = {
           id: `${outputAlias}/${modelId}`,

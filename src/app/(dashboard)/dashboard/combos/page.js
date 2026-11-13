@@ -1,11 +1,13 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import Link from "next/link";
 import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
 import { arrayMove, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { restrictToVerticalAxis, restrictToParentElement } from "@dnd-kit/modifiers";
-import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, ConfirmModal, CapacityBadges, Select, Toggle, Badge, SmartPolicyModal } from "@/shared/components";
+import { Card, Button, Modal, Input, CardSkeleton, ModelSelectModal, ConfirmModal, CapacityBadges, Select, Toggle, Badge, SmartPolicyModal, SegmentedControl } from "@/shared/components";
+import AccountCombosSection from "./AccountCombosSection";
 import { useCopyToClipboard } from "@/shared/hooks/useCopyToClipboard";
 import { useModelCaps } from "@/shared/hooks/useModelCaps";
 import { aggregateComboCapabilities } from "open-sse/providers/capabilities.js";
@@ -67,6 +69,7 @@ function getPolicyBadgeLabel(strategy = {}) {
 }
 
 export default function CombosPage() {
+  const [activeTab, setActiveTab] = useState("models");
   const [combos, setCombos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showCreateModal, setShowCreateModal] = useState(false);
@@ -390,7 +393,24 @@ export default function CombosPage() {
 
   return (
     <div className="flex min-w-0 flex-col gap-6 px-1 sm:px-0">
-      {/* Header */}
+      {/* Tab Switcher */}
+      <div className="flex items-center justify-between border-b border-border/40 pb-3">
+        <SegmentedControl
+          options={[
+            { value: "models", label: "Model Combos", icon: "layers" },
+            { value: "accounts", label: "Combo Akun (Model-to-Accounts)", icon: "switch_account" },
+          ]}
+          value={activeTab}
+          onChange={setActiveTab}
+          size="sm"
+        />
+      </div>
+
+      {activeTab === "accounts" ? (
+        <AccountCombosSection activeProviders={activeProviders} />
+      ) : (
+        <>
+          {/* Header */}
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <p className="text-sm text-text-muted mt-1">
@@ -609,17 +629,19 @@ export default function CombosPage() {
         />
       )}
 
-      {/* Confirm (delete / generate presets) */}
-      <ConfirmModal
-        isOpen={!!confirmState}
-        onClose={() => !confirmState?.loading && setConfirmState(null)}
-        onConfirm={confirmState?.onConfirm}
-        title={confirmState?.title || "Confirm"}
-        message={confirmState?.message}
-        confirmText={confirmState?.confirmText || "Confirm"}
-        variant={confirmState?.variant || "danger"}
-        loading={!!confirmState?.loading}
-      />
+          {/* Confirm (delete / generate presets) */}
+          <ConfirmModal
+            isOpen={!!confirmState}
+            onClose={() => !confirmState?.loading && setConfirmState(null)}
+            onConfirm={confirmState?.onConfirm}
+            title={confirmState?.title || "Confirm"}
+            message={confirmState?.message}
+            confirmText={confirmState?.confirmText || "Confirm"}
+            variant={confirmState?.variant || "danger"}
+            loading={!!confirmState?.loading}
+          />
+        </>
+      )}
     </div>
   );
 }

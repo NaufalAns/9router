@@ -1,5 +1,5 @@
 // Re-export from open-sse with localDb integration
-import { getModelAliases, getComboByName, getProviderNodes, getProviderConnections } from "@/lib/localDb";
+import { getModelAliases, getComboByName, getProviderNodes, getProviderConnections, getAccountComboByName } from "@/lib/localDb";
 import { parseModel as parseModelCore, resolveModelAliasFromMap, getModelInfoCore } from "open-sse/services/model.js";
 import REGISTRY from "open-sse/providers/registry/index.js";
 
@@ -73,6 +73,23 @@ export async function getModelInfo(modelStr) {
     // Return null provider to signal this should be handled as combo
     // The caller (handleChat) will detect this and handle it as combo
     return { provider: null, model: parsed.model };
+  }
+
+  // Check if this is an account combo name
+  if (typeof getAccountComboByName === "function") {
+    try {
+      const ac = await getAccountComboByName(parsed.model);
+      if (ac && ac.isActive !== false) {
+        const targetParsed = parseModel(ac.model);
+        return {
+          provider: ac.provider || targetParsed.provider,
+          model: targetParsed.model,
+          accountCombo: ac,
+        };
+      }
+    } catch {
+      // ignore
+    }
   }
 
   return fallbackToClaudeOAuth(await getModelInfoCore(modelStr, getModelAliases));

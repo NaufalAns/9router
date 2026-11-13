@@ -13,6 +13,8 @@ export {
   getApiKeys, getApiKeyById, getApiKeyByKey, createApiKey, updateApiKey, deleteApiKey, validateApiKey,
   getCombos, getComboById, getComboByName,
   createCombo, updateCombo, deleteCombo,
+  getAccountCombos, getAccountComboById, getAccountComboByName, getAccountComboByModel,
+  createAccountCombo, updateAccountCombo, deleteAccountCombo,
   getModelAliases, setModelAlias, deleteModelAlias,
   getCustomModels, addCustomModel, deleteCustomModel,
   getMitmAlias, setMitmAliasAll,

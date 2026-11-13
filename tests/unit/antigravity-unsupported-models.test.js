@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   updateProviderConnection: vi.fn(),
   getSettings: vi.fn(),
   getProxyPools: vi.fn(),
+  getAccountCombos: vi.fn(async () => []),
 }));
 
 vi.mock("@/lib/localDb", () => ({
@@ -13,6 +14,7 @@ vi.mock("@/lib/localDb", () => ({
   updateProviderConnection: mocks.updateProviderConnection,
   getSettings: mocks.getSettings,
   getProxyPools: mocks.getProxyPools,
+  getAccountCombos: mocks.getAccountCombos,
   validateApiKey: vi.fn(),
 }));
 

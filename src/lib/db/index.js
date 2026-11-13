@@ -40,6 +40,12 @@ export {
   createCombo, updateCombo, deleteCombo,
 } from "./repos/combosRepo.js";
 
+// Account Combos
+export {
+  getAccountCombos, getAccountComboById, getAccountComboByName, getAccountComboByModel,
+  createAccountCombo, updateAccountCombo, deleteAccountCombo,
+} from "./repos/accountCombosRepo.js";
+
 // Aliases (model + custom + mitm)
 export {
   getModelAliases, setModelAlias, deleteModelAlias,
@@ -81,6 +87,7 @@ export async function exportDb() {
     proxyPools: db.all(`SELECT * FROM proxyPools`).map((r) => ({ ...parseJson(r.data, {}), id: r.id, isActive: r.isActive === 1, testStatus: r.testStatus, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     apiKeys: db.all(`SELECT * FROM apiKeys`).map((r) => ({ id: r.id, key: r.key, name: r.name, machineId: r.machineId, isActive: r.isActive === 1, createdAt: r.createdAt, access: keyAccessFromColumns(r.accessRestricted, r.accessAllow) })),
     combos: db.all(`SELECT * FROM combos`).map((r) => ({ id: r.id, name: r.name, kind: r.kind, models: parseJson(r.models, []), createdAt: r.createdAt, updatedAt: r.updatedAt })),
+    accountCombos: db.all(`SELECT * FROM accountCombos`).map((r) => ({ id: r.id, name: r.name, model: r.model, provider: r.provider, connectionIds: parseJson(r.connectionIds, []), fallbackMode: r.fallbackMode, isActive: r.isActive === 1, createdAt: r.createdAt, updatedAt: r.updatedAt })),
     modelAliases: {},
     customModels: [],
     mitmAlias: {},
@@ -109,6 +116,7 @@ export async function importDb(payload) {
     db.run(`DELETE FROM proxyPools`);
     db.run(`DELETE FROM apiKeys`);
     db.run(`DELETE FROM combos`);
+    db.run(`DELETE FROM accountCombos`);
     db.run(`DELETE FROM kv WHERE scope IN ('modelAliases', 'customModels', 'mitmAlias', 'pricing')`);
 
     // Settings
@@ -156,6 +164,12 @@ export async function importDb(payload) {
       db.run(
         `INSERT OR REPLACE INTO combos(id, name, kind, models, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?)`,
         [c.id, c.name, c.kind || null, stringifyJson(c.models || []), c.createdAt || new Date().toISOString(), c.updatedAt || new Date().toISOString()]
+      );
+    }
+    for (const ac of payload.accountCombos || []) {
+      db.run(
+        `INSERT OR REPLACE INTO accountCombos(id, name, model, provider, connectionIds, fallbackMode, isActive, createdAt, updatedAt) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [ac.id, ac.name || null, ac.model, ac.provider, stringifyJson(ac.connectionIds || []), ac.fallbackMode || "strict", ac.isActive === false ? 0 : 1, ac.createdAt || new Date().toISOString(), ac.updatedAt || new Date().toISOString()]
       );
     }
     for (const [a, m] of Object.entries(payload.modelAliases || {})) {
