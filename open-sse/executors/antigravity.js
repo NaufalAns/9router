@@ -324,10 +324,12 @@ export class AntigravityExecutor extends BaseExecutor {
       const normalized = rawThinkingLevel.toLowerCase();
       if (supportedLevels?.length && !supportedLevels.includes(normalized)) {
         const lowest = supportedLevels.find((l) => l !== "none");
-        if (lowest) {
+        const highest = [...supportedLevels].reverse().find((l) => l !== "none");
+        const fallback = (normalized === "xhigh" || normalized === "max") ? (highest || lowest) : lowest;
+        if (fallback) {
           generationConfig.thinkingConfig = {
             ...generationConfig.thinkingConfig,
-            thinkingLevel: rawThinkingLevel === rawThinkingLevel.toUpperCase() ? lowest.toUpperCase() : lowest,
+            thinkingLevel: rawThinkingLevel === rawThinkingLevel.toUpperCase() ? fallback.toUpperCase() : fallback,
           };
         }
       }

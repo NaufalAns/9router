@@ -28,7 +28,7 @@ export function effortToBudget(effort) {
 export function effortToThinkingLevel(effort) {
   const e = String(effort).toLowerCase().trim();
   if (e === "none" || e === "off") return "minimal";
-  if (e === "xhigh" || e === "max") return "high";
+  if (e === "max") return "xhigh";
   return e;
 }
 

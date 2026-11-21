@@ -199,6 +199,7 @@ const GEMINI_LEVEL_OUTPUT_FLOOR = {
   low: 8192,
   medium: 16384,
   high: 65535,
+  xhigh: 65535,
 };
 
 function geminiBudgetOutputFloor(budget) {
@@ -319,8 +320,12 @@ function applyFormat(fmt, body, cfg, caps, supportedLevels, display, model = "",
     case "gemini-level": {
       let level = none ? "minimal" : toGeminiThinkingLevel(eff);
       // Models without a "minimal" tier (Gemini 4) reject it with 400 — clamp to the lowest supported level.
-      const lowest = supportedLevels?.find((l) => l !== "none");
-      if (supportedLevels?.length && lowest && !supportedLevels.includes(level)) level = lowest;
+      // Models without an "xhigh" tier clamp xhigh/max to the highest supported level.
+      if (supportedLevels?.length && !supportedLevels.includes(level)) {
+        const lowest = supportedLevels.find((l) => l !== "none");
+        const highest = [...supportedLevels].reverse().find((l) => l !== "none");
+        level = (level === "xhigh" || level === "max") ? (highest || lowest || level) : (lowest || level);
+      }
       setGeminiThinking(body, { thinkingLevel: level, includeThoughts: level !== "minimal" });
       ensureGeminiOutputFloor(body, geminiLevelOutputFloor(level), caps);
       break;

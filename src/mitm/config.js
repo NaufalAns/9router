@@ -52,9 +52,15 @@ function isChatRequest(tool, req) {
 const MODEL_SYNONYMS = {
   antigravity: {
     "gemini-4-hydrogen": "gemini-4-hydrogen-medium",
+    "gemini-4-hydrogen-xhigh": "gemini-4-hydrogen-xhigh",
     "gemini-4-hydrogen-high": "gemini-4-hydrogen-high",
     "gemini-4-hydrogen-medium": "gemini-4-hydrogen-medium",
     "gemini-4-hydrogen-low": "gemini-4-hydrogen-low",
+    "gemini-4-neon": "gemini-4-neon-medium",
+    "gemini-4-neon-xhigh": "gemini-4-neon-xhigh",
+    "gemini-4-neon-high": "gemini-4-neon-high",
+    "gemini-4-neon-medium": "gemini-4-neon-medium",
+    "gemini-4-neon-low": "gemini-4-neon-low",
     "gemini-4-carbon": "gemini-4-carbon-medium",
     "gemini-4-carbon-high": "gemini-4-carbon-high",
     "gemini-4-carbon-medium": "gemini-4-carbon-medium",
@@ -111,9 +117,14 @@ const MODEL_SYNONYMS = {
 // Order matters: more specific patterns first. Catches AG renamed variants (e.g. gemini-pro-agent)
 const MODEL_PATTERNS = {
   antigravity: [
+    { match: /hydrogen.*xhigh/i,                                   alias: "gemini-4-hydrogen-xhigh" },
     { match: /hydrogen.*high/i,                                    alias: "gemini-4-hydrogen-high" },
     { match: /hydrogen.*low/i,                                     alias: "gemini-4-hydrogen-low" },
     { match: /hydrogen/i,                                          alias: "gemini-4-hydrogen-medium" },
+    { match: /neon.*xhigh/i,                                       alias: "gemini-4-neon-xhigh" },
+    { match: /neon.*high/i,                                        alias: "gemini-4-neon-high" },
+    { match: /neon.*low/i,                                         alias: "gemini-4-neon-low" },
+    { match: /neon/i,                                              alias: "gemini-4-neon-medium" },
     { match: /carbon.*high/i,                                      alias: "gemini-4-carbon-high" },
     { match: /carbon.*low/i,                                       alias: "gemini-4-carbon-low" },
     { match: /carbon/i,                                            alias: "gemini-4-carbon-medium" },
